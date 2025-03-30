@@ -1,0 +1,205 @@
+/* Define CSS Variables for themes */
+:root {
+  --bg-color: #ffffff;
+  --text-color: #333333;
+  --pane-bg-color: #f8f8f8;
+  --border-color: #cccccc;
+  --pre-bg-color: #f4f4f4;
+  --pre-border-color: #dddddd;
+  --button-bg-color: #e0e0e0;
+  --button-hover-bg-color: #d0d0d0;
+  --error-bg-color: #ffebee;
+  --error-text-color: #d32f2f;
+  --error-border-color: #d32f2f;
+  --heading-color: #555555;
+  --input-bg-color: #ffffff;
+  --input-border-color: #cccccc;
+  --input-text-color: #333333;
+}
+
+html.dark { /* Variables for dark theme */
+  --bg-color: #242424;
+  --text-color: #eeeeee;
+  --pane-bg-color: #333333;
+  --border-color: #555555;
+  --pre-bg-color: #2d2d2d;
+  --pre-border-color: #444444;
+  --button-bg-color: #555555;
+  --button-hover-bg-color: #666666;
+  --error-bg-color: #5d3030;
+  --error-text-color: #ffcdd2;
+  --error-border-color: #e57373;
+  --heading-color: #cccccc;
+  --input-bg-color: #3a3a3a;
+  --input-border-color: #555555;
+  --input-text-color: #eeeeee;
+}
+
+/* Reset basic styles */
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-color); /* Use variable */
+  color: var(--text-color); /* Use variable */
+  height: 100vh;
+  overflow: hidden; /* Prevent body scrolling */
+}
+
+#root {
+  height: 100vh;
+  display: flex; /* Make root a flex container */
+}
+
+/* Main application container */
+.app-container {
+  display: flex;
+  flex-direction: row; /* Arrange panes horizontally */
+  width: 100%;
+  height: 100vh;
+  background-color: var(--bg-color); /* Use variable */
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); /* Keep shadow or theme it */
+}
+
+/* Panes styling */
+.left-pane,
+.right-pane {
+  flex: 0 0 250px; /* Fixed width for side panes */
+  padding: 1rem;
+  border-right: 1px solid var(--border-color); /* Use variable */
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto; /* Allow vertical scrolling if content overflows */
+  background-color: var(--pane-bg-color); /* Use variable */
+}
+
+.right-pane {
+  border-right: none;
+  border-left: 1px solid var(--border-color); /* Use variable */
+}
+
+.center-pane {
+  flex: 1; /* Takes up remaining space */
+  display: flex;
+  flex-direction: column; /* Stack context and query vertically */
+  padding: 1rem;
+  overflow: hidden; /* Prevent center pane itself from scrolling */
+}
+
+/* Inner panes within center */
+.context-pane,
+.query-pane,
+.response-pane { /* Added response-pane for consistency */
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem; /* Spacing between inner panes */
+}
+
+.context-pane {
+  flex: 1; /* Context takes more space */
+  overflow: hidden; /* Hide overflow, rely on inner pre */
+}
+
+.query-pane {
+  flex: 0 0 auto; /* Query pane takes needed height */
+}
+
+.response-pane {
+   flex: 1; /* Response takes available space in right pane */
+   overflow: hidden; /* Hide overflow, rely on inner pre */
+   margin-top: 1rem;
+   border-top: 1px solid #eee;
+   padding-top: 1rem;
+}
+
+
+/* Text areas and Preformatted text */
+textarea {
+  width: 100%;
+  box-sizing: border-box; /* Include padding and border in element's total width and height */
+  padding: 0.5rem;
+  border: 1px solid var(--input-border-color); /* Use variable */
+  background-color: var(--input-bg-color); /* Use variable */
+  color: var(--input-text-color); /* Use variable */
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.context-display-area,
+.response-display-area {
+  flex-grow: 1; /* Allow pre to take up available space */
+  background-color: var(--pre-bg-color); /* Use variable */
+  border: 1px solid var(--pre-border-color); /* Use variable */
+  color: var(--text-color); /* Use variable */
+  padding: 0.5rem 1rem;
+  overflow: auto; /* Enable scrolling within the pre tag */
+  white-space: pre-wrap; /* Wrap long lines */
+  word-wrap: break-word; /* Break words if necessary */
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  min-height: 100px; /* Ensure a minimum height */
+}
+
+/* Buttons */
+button {
+  padding: 0.5rem 1rem;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border-color); /* Use variable */
+  border-radius: 4px;
+  background-color: var(--button-bg-color); /* Use variable */
+  color: var(--text-color); /* Use variable */
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background-color: var(--button-hover-bg-color); /* Use variable */
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.copy-button {
+  margin-top: 0.5rem;
+  align-self: flex-end; /* Position copy button to the right */
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+/* Error display */
+.error-display {
+  color: var(--error-text-color); /* Use variable */
+  background-color: var(--error-bg-color); /* Use variable */
+  border: 1px solid var(--error-border-color); /* Use variable */
+  padding: 0.5rem;
+  margin-top: 1rem;
+  border-radius: 4px;
+  word-wrap: break-word;
+}
+
+/* Headings */
+h3, h4 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  color: var(--heading-color); /* Use variable */
+}
+
+/* Input fields */
+input[type="password"],
+select {
+    width: 100%;
+    padding: 0.5rem;
+    margin-top: 0.2rem;
+    margin-bottom: 0.5rem;
+    box-sizing: border-box;
+    border: 1px solid var(--input-border-color); /* Use variable */
+    background-color: var(--input-bg-color); /* Use variable */
+    color: var(--input-text-color); /* Use variable */
+    border-radius: 4px;
+}

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2020", // Target modern Node.js versions supported by Electron
+    "module": "CommonJS", // Electron main/preload typically use CommonJS
+    "lib": ["ES2020"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "../dist-electron", // Output directory matching package.json main field
+    "rootDir": ".", // Source directory is the electron folder
+    "resolveJsonModule": true, // Allow importing JSON files
+    "moduleResolution": "node", // Use Node.js module resolution
+    "sourceMap": true // Generate source maps for debugging
+  },
+  "include": ["./**/*.ts"], // Include all .ts files in the electron directory
+  "exclude": ["node_modules", "../src"] // Exclude node_modules and the React source
+}

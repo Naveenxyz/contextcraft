@@ -1,0 +1,44 @@
+{
+  "name": "contextcraft",
+  "description": "Desktop app to analyze code and interact with LLMs",
+  "author": "Your Name/Org",
+  "private": true,
+  "version": "0.1.0",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "package": "npm run build && npm run build:electron && electron-builder",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "axios": "^1.8.4",
+    "electron-squirrel-startup": "^1.0.1",
+    "electron-store": "^10.0.1",
+    "keytar": "^7.9.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^15.6.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.21.0",
+    "@types/node": "^22.13.14",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^35.1.2",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.21.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.19",
+    "globals": "^15.15.0",
+    "typescript": "~5.7.2",
+    "typescript-eslint": "^8.24.1",
+    "vite": "^6.2.0",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  }
+}
