@@ -279,13 +279,64 @@ app.whenReady().then(() => {
         return false; // Indicate failure
     }
    });
+
+   // Handle Fetching Models for a Configuration
+   ipcMain.handle('llm:fetchModels', async (_, configId: string): Promise<string[] | null> => {
+       console.log(`Fetching models for config ID: ${configId}`);
+       const configs = (store as any).get('llmConfigs', []) as LLMConfig[];
+       const selectedConfig = configs.find(c => c.id === configId);
+
+       if (!selectedConfig) {
+           console.error(`Config ${configId} not found for fetching models.`);
+           return null; // Or throw error
+       }
+
+       const apiKey = await keytar.getPassword(KEYTAR_SERVICE_NAME, selectedConfig.apiKeyId);
+       if (!apiKey) {
+           console.error(`API Key not found for config ${configId} when fetching models.`);
+           return null; // Or throw error
+       }
+
+       // Construct the /models URL
+       const modelsUrl = new URL('/models', selectedConfig.apiEndpoint).toString();
+       console.log(`Fetching models from: ${modelsUrl}`);
+
+       try {
+           const response = await axios.get(modelsUrl, {
+               headers: {
+                   'Authorization': `Bearer ${apiKey}`,
+               }
+           });
+
+           // Assuming the response structure is like OpenAI's: { data: [{ id: "model-name" }, ...] }
+           if (response.data && Array.isArray(response.data.data)) {
+               const modelIds = response.data.data.map((model: any) => model.id).filter((id: any) => typeof id === 'string');
+               console.log(`Found models: ${modelIds.join(', ')}`);
+               return modelIds;
+           } else {
+               console.warn(`Unexpected response structure from ${modelsUrl}:`, response.data);
+               return null; // Indicate unexpected structure
+           }
+       } catch (error: any) {
+           const errorMessage = error.response?.data?.error?.message || error.message;
+           console.error(`Error fetching models from ${modelsUrl}:`, errorMessage, error.response?.data);
+           return null; // Indicate failure
+       }
+   });
    // --- End LLM Configuration Handlers ---
 
 
-  // Handle LLM Prompt Sending (Uses Config)
-  ipcMain.handle('llm:sendPrompt', async (_, payload: { context: string; query: string; configId: string; model: string; }) => {
+  // Handle LLM Prompt Sending (Streaming)
+  ipcMain.on('llm:sendStreamRequest', async (event, payload: { context: string; query: string; configId: string; model: string; }) => {
     const { context, query, configId, model } = payload;
-    console.log(`Sending prompt using config ${configId} and model ${model}...`);
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+
+    if (!senderWindow) {
+      console.error("Could not find sender window for LLM stream request.");
+      return; // Cannot send response back
+    }
+
+    console.log(`Streaming prompt using config ${configId} and model ${model}...`);
 
     // Find the selected configuration
     const configs = (store as any).get('llmConfigs', []) as LLMConfig[];
@@ -314,28 +365,77 @@ app.whenReady().then(() => {
     console.log(`Target API URL: ${apiUrl}`);
 
     try {
-        const response = await axios.post(apiUrl, {
-          model: model, // Use the selected model from payload
-          messages: [
-            { role: "system", content: `Based on the following project context:\n\n${context}\n\nAnswer the user's query.` }, // Keep or adjust system prompt
-            { role: "user", content: query }
-          ],
-          // Add parameters like temperature, max_tokens if needed
-        }, {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        console.log(`Received response using model ${model}.`); // Log model used
-        return response.data.choices[0]?.message?.content || "No response content received.";
-      } catch (error: any) {
-        const errorMessage = error.response?.data?.error?.message || error.message;
-        // Log config name and model for better debugging
-        console.error(`API Error for ${selectedConfig.name} (${model}):`, errorMessage, error.response?.data);
-        throw new Error(`API request failed: ${errorMessage}`);
+      const response = await axios.post(apiUrl, {
+        model: model,
+        messages: [
+          { role: "system", content: `Based on the following project context:\n\n${context}\n\nAnswer the user's query.` },
+          { role: "user", content: query }
+        ],
+        stream: true, // Enable streaming
+      }, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream', // Important for SSE
+        },
+        responseType: 'stream', // Tell axios to handle the response as a stream
+      });
+
+      // Handle the stream
+      response.data.on('data', (chunk: Buffer) => {
+        const chunkStr = chunk.toString('utf-8');
+        // Parse SSE data: lines starting with "data: "
+        const lines = chunkStr.split('\n').filter(line => line.trim().startsWith('data: '));
+        for (const line of lines) {
+            const jsonData = line.substring('data: '.length).trim();
+            if (jsonData === '[DONE]') {
+                // Stream finished signal from OpenAI spec
+                console.log('Stream finished [DONE]');
+                if (!senderWindow.isDestroyed()) {
+                    senderWindow.webContents.send('llm:streamEnd');
+                }
+                return; // Stop processing this chunk
+            }
+            try {
+                const parsed = JSON.parse(jsonData);
+                const content = parsed.choices?.[0]?.delta?.content;
+                if (content) {
+                    // Send the actual text content chunk back
+                     if (!senderWindow.isDestroyed()) {
+                        senderWindow.webContents.send('llm:chunk', content);
+                    }
+                }
+            } catch (parseError) {
+                console.error('Failed to parse stream chunk JSON:', jsonData, parseError);
+                // Optionally send a specific error or ignore malformed chunks
+            }
+        }
+      });
+
+      response.data.on('end', () => {
+        console.log('Axios stream ended.');
+        // Ensure end signal is sent if not already sent by [DONE]
+         if (!senderWindow.isDestroyed()) {
+            senderWindow.webContents.send('llm:streamEnd');
+        }
+      });
+
+      response.data.on('error', (streamError: Error) => {
+        console.error('Axios stream error:', streamError);
+         if (!senderWindow.isDestroyed()) {
+            senderWindow.webContents.send('llm:streamError', `Stream error: ${streamError.message}`);
+        }
+      });
+
+    } catch (error: any) {
+      // Handle initial connection errors or non-2xx responses before stream starts
+      const errorMessage = error.response?.data?.error?.message || error.message;
+      console.error(`API Request Error for ${selectedConfig.name} (${model}):`, errorMessage, error.response?.data);
+      // Send error back to renderer via the stream error channel
+       if (!senderWindow.isDestroyed()) {
+        senderWindow.webContents.send('llm:streamError', `API request failed: ${errorMessage}`);
       }
-    // Removed the old 'else' block and specific 'OpenAI' check
+    }
   });
 
 

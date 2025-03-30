@@ -8,9 +8,12 @@ const electronAPI = {
     // Keep for now
     electron.ipcRenderer.invoke("secure:setApiKey", service, apiKey)
   ),
-  // Update sendPrompt payload type
-  sendPrompt: (payload) => electron.ipcRenderer.invoke("llm:sendPrompt", payload),
-  // Ensure channel name matches main process handler
+  // Remove old sendPrompt
+  // sendPrompt: (payload: { context: string; query: string; configId: string; model: string; }): Promise<string> =>
+  //   ipcRenderer.invoke('llm:sendPrompt', payload),
+  // Add function to initiate stream request
+  sendPromptStreamRequest: (payload) => electron.ipcRenderer.send("llm:sendStreamRequest", payload),
+  // Use ipcRenderer.send for one-way trigger
   // Update return type to match main process handler
   analyzeDirectory: (path) => (
     // Use 'any[]' for now, define DirectoryItem in shared types later if needed
@@ -26,6 +29,7 @@ const electronAPI = {
   addLLMConfig: (config, apiKey) => electron.ipcRenderer.invoke("llm:addConfig", config, apiKey),
   updateLLMConfig: (config, apiKey) => electron.ipcRenderer.invoke("llm:updateConfig", config, apiKey),
   deleteLLMConfig: (configId) => electron.ipcRenderer.invoke("llm:deleteConfig", configId),
+  fetchModelsForConfig: (configId) => electron.ipcRenderer.invoke("llm:fetchModels", configId),
   // Main -> Renderer (Send/On pattern - requires cleanup)
   onUpdateContext: (callback) => {
     const handler = (_event, context) => callback(context);
@@ -41,6 +45,22 @@ const electronAPI = {
     const handler = (_event, errorMsg) => callback(errorMsg);
     electron.ipcRenderer.on("analysis-error", handler);
     return () => electron.ipcRenderer.removeListener("analysis-error", handler);
+  },
+  // LLM Streaming Listeners
+  onLLMChunk: (callback) => {
+    const handler = (_event, chunk) => callback(chunk);
+    electron.ipcRenderer.on("llm:chunk", handler);
+    return () => electron.ipcRenderer.removeListener("llm:chunk", handler);
+  },
+  onLLMStreamEnd: (callback) => {
+    const handler = (_event) => callback();
+    electron.ipcRenderer.on("llm:streamEnd", handler);
+    return () => electron.ipcRenderer.removeListener("llm:streamEnd", handler);
+  },
+  onLLMStreamError: (callback) => {
+    const handler = (_event, errorMsg) => callback(errorMsg);
+    electron.ipcRenderer.on("llm:streamError", handler);
+    return () => electron.ipcRenderer.removeListener("llm:streamError", handler);
   },
   // Utility to remove all listeners for a channel if needed (use carefully)
   removeAllListeners: (channel) => electron.ipcRenderer.removeAllListeners(channel)

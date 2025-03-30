@@ -14,10 +14,10 @@ interface ThemeProviderProps {
 }
 
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
-  // Default to light theme or user's system preference if possible
+  // Default to dark theme
   const [theme, setTheme] = useState<Theme>(() => {
-      // You could add logic here to check localStorage or prefers-color-scheme
-      return 'light'; // Default to light for simplicity
+      // You could add logic here to check localStorage or prefers-color-scheme later
+      return 'dark'; // Default to dark
   });
 
   useEffect(() => {

@@ -209,10 +209,51 @@ electron.app.whenReady().then(() => {
       return false;
     }
   });
-  electron.ipcMain.handle("llm:sendPrompt", async (_, payload) => {
-    var _a, _b, _c, _d, _e, _f;
+  electron.ipcMain.handle("llm:fetchModels", async (_, configId) => {
+    var _a, _b, _c, _d;
+    console.log(`Fetching models for config ID: ${configId}`);
+    const configs = store.get("llmConfigs", []);
+    const selectedConfig = configs.find((c) => c.id === configId);
+    if (!selectedConfig) {
+      console.error(`Config ${configId} not found for fetching models.`);
+      return null;
+    }
+    const apiKey = await keytar.getPassword(KEYTAR_SERVICE_NAME, selectedConfig.apiKeyId);
+    if (!apiKey) {
+      console.error(`API Key not found for config ${configId} when fetching models.`);
+      return null;
+    }
+    const modelsUrl = new URL("/models", selectedConfig.apiEndpoint).toString();
+    console.log(`Fetching models from: ${modelsUrl}`);
+    try {
+      const response = await axios.get(modelsUrl, {
+        headers: {
+          "Authorization": `Bearer ${apiKey}`
+        }
+      });
+      if (response.data && Array.isArray(response.data.data)) {
+        const modelIds = response.data.data.map((model) => model.id).filter((id) => typeof id === "string");
+        console.log(`Found models: ${modelIds.join(", ")}`);
+        return modelIds;
+      } else {
+        console.warn(`Unexpected response structure from ${modelsUrl}:`, response.data);
+        return null;
+      }
+    } catch (error) {
+      const errorMessage = ((_c = (_b = (_a = error.response) == null ? void 0 : _a.data) == null ? void 0 : _b.error) == null ? void 0 : _c.message) || error.message;
+      console.error(`Error fetching models from ${modelsUrl}:`, errorMessage, (_d = error.response) == null ? void 0 : _d.data);
+      return null;
+    }
+  });
+  electron.ipcMain.on("llm:sendStreamRequest", async (event, payload) => {
+    var _a, _b, _c, _d;
     const { context, query, configId, model } = payload;
-    console.log(`Sending prompt using config ${configId} and model ${model}...`);
+    const senderWindow = electron.BrowserWindow.fromWebContents(event.sender);
+    if (!senderWindow) {
+      console.error("Could not find sender window for LLM stream request.");
+      return;
+    }
+    console.log(`Streaming prompt using config ${configId} and model ${model}...`);
     const configs = store.get("llmConfigs", []);
     const selectedConfig = configs.find((c) => c.id === configId);
     if (!selectedConfig) {
@@ -231,29 +272,70 @@ electron.app.whenReady().then(() => {
     try {
       const response = await axios.post(apiUrl, {
         model,
-        // Use the selected model from payload
         messages: [
           { role: "system", content: `Based on the following project context:
 
 ${context}
 
 Answer the user's query.` },
-          // Keep or adjust system prompt
           { role: "user", content: query }
-        ]
-        // Add parameters like temperature, max_tokens if needed
+        ],
+        stream: true
+        // Enable streaming
       }, {
         headers: {
           "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream"
+          // Important for SSE
+        },
+        responseType: "stream"
+        // Tell axios to handle the response as a stream
+      });
+      response.data.on("data", (chunk) => {
+        var _a2, _b2, _c2;
+        const chunkStr = chunk.toString("utf-8");
+        const lines = chunkStr.split("\n").filter((line) => line.trim().startsWith("data: "));
+        for (const line of lines) {
+          const jsonData = line.substring("data: ".length).trim();
+          if (jsonData === "[DONE]") {
+            console.log("Stream finished [DONE]");
+            if (!senderWindow.isDestroyed()) {
+              senderWindow.webContents.send("llm:streamEnd");
+            }
+            return;
+          }
+          try {
+            const parsed = JSON.parse(jsonData);
+            const content = (_c2 = (_b2 = (_a2 = parsed.choices) == null ? void 0 : _a2[0]) == null ? void 0 : _b2.delta) == null ? void 0 : _c2.content;
+            if (content) {
+              if (!senderWindow.isDestroyed()) {
+                senderWindow.webContents.send("llm:chunk", content);
+              }
+            }
+          } catch (parseError) {
+            console.error("Failed to parse stream chunk JSON:", jsonData, parseError);
+          }
         }
       });
-      console.log(`Received response using model ${model}.`);
-      return ((_b = (_a = response.data.choices[0]) == null ? void 0 : _a.message) == null ? void 0 : _b.content) || "No response content received.";
+      response.data.on("end", () => {
+        console.log("Axios stream ended.");
+        if (!senderWindow.isDestroyed()) {
+          senderWindow.webContents.send("llm:streamEnd");
+        }
+      });
+      response.data.on("error", (streamError) => {
+        console.error("Axios stream error:", streamError);
+        if (!senderWindow.isDestroyed()) {
+          senderWindow.webContents.send("llm:streamError", `Stream error: ${streamError.message}`);
+        }
+      });
     } catch (error) {
-      const errorMessage = ((_e = (_d = (_c = error.response) == null ? void 0 : _c.data) == null ? void 0 : _d.error) == null ? void 0 : _e.message) || error.message;
-      console.error(`API Error for ${selectedConfig.name} (${model}):`, errorMessage, (_f = error.response) == null ? void 0 : _f.data);
-      throw new Error(`API request failed: ${errorMessage}`);
+      const errorMessage = ((_c = (_b = (_a = error.response) == null ? void 0 : _a.data) == null ? void 0 : _b.error) == null ? void 0 : _c.message) || error.message;
+      console.error(`API Request Error for ${selectedConfig.name} (${model}):`, errorMessage, (_d = error.response) == null ? void 0 : _d.data);
+      if (!senderWindow.isDestroyed()) {
+        senderWindow.webContents.send("llm:streamError", `API request failed: ${errorMessage}`);
+      }
     }
   });
   electron.app.on("activate", () => {

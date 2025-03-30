@@ -22,9 +22,12 @@ const electronAPI = {
     ipcRenderer.invoke('secure:getApiKey', service),
   setApiKey: (service: string, apiKey: string): Promise<void> => // Keep for now
     ipcRenderer.invoke('secure:setApiKey', service, apiKey),
-  // Update sendPrompt payload type
-  sendPrompt: (payload: { context: string; query: string; configId: string; model: string; }): Promise<string> =>
-    ipcRenderer.invoke('llm:sendPrompt', payload), // Ensure channel name matches main process handler
+  // Remove old sendPrompt
+  // sendPrompt: (payload: { context: string; query: string; configId: string; model: string; }): Promise<string> =>
+  //   ipcRenderer.invoke('llm:sendPrompt', payload),
+  // Add function to initiate stream request
+  sendPromptStreamRequest: (payload: { context: string; query: string; configId: string; model: string; }): void =>
+    ipcRenderer.send('llm:sendStreamRequest', payload), // Use ipcRenderer.send for one-way trigger
   // Update return type to match main process handler
   analyzeDirectory: (path: string): Promise<any[] | string> => // Use 'any[]' for now, define DirectoryItem in shared types later if needed
     ipcRenderer.invoke('analysis:analyzeDirectory', path),
@@ -37,6 +40,7 @@ const electronAPI = {
   addLLMConfig: (config: Omit<LLMConfig, 'id' | 'apiKeyId'>, apiKey: string): Promise<LLMConfig | null> => ipcRenderer.invoke('llm:addConfig', config, apiKey),
   updateLLMConfig: (config: LLMConfig, apiKey?: string): Promise<boolean> => ipcRenderer.invoke('llm:updateConfig', config, apiKey),
   deleteLLMConfig: (configId: string): Promise<boolean> => ipcRenderer.invoke('llm:deleteConfig', configId),
+  fetchModelsForConfig: (configId: string): Promise<string[] | null> => ipcRenderer.invoke('llm:fetchModels', configId),
 
   // Main -> Renderer (Send/On pattern - requires cleanup)
   onUpdateContext: (callback: (context: string) => void) => {
@@ -56,6 +60,22 @@ const electronAPI = {
     ipcRenderer.on('analysis-error', handler);
     // Return a cleanup function
     return () => ipcRenderer.removeListener('analysis-error', handler);
+  },
+  // LLM Streaming Listeners
+  onLLMChunk: (callback: (chunk: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, chunk: string) => callback(chunk);
+    ipcRenderer.on('llm:chunk', handler);
+    return () => ipcRenderer.removeListener('llm:chunk', handler);
+  },
+  onLLMStreamEnd: (callback: () => void) => {
+    const handler = (_event: Electron.IpcRendererEvent) => callback();
+    ipcRenderer.on('llm:streamEnd', handler);
+    return () => ipcRenderer.removeListener('llm:streamEnd', handler);
+  },
+  onLLMStreamError: (callback: (errorMsg: string) => void) => {
+     const handler = (_event: Electron.IpcRendererEvent, errorMsg: string) => callback(errorMsg);
+    ipcRenderer.on('llm:streamError', handler);
+    return () => ipcRenderer.removeListener('llm:streamError', handler);
   },
 
   // Utility to remove all listeners for a channel if needed (use carefully)

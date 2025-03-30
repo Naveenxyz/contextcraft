@@ -21,16 +21,17 @@ function App() {
   const [isCompiling, setIsCompiling] = useState<boolean>(false); // Loading state for context compilation
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState<string>(''); // State for user query
-  const [llmResponse, setLlmResponse] = useState<string>(''); // State for LLM response
+  const [thinkingSteps, setThinkingSteps] = useState<string>(''); // State for <think> content
+  const [llmResponse, setLlmResponse] = useState<string>(''); // State for final LLM response (excluding <think>)
   const [isSending, setIsSending] = useState<boolean>(false); // State for LLM request loading
   // State for LLM Configurations
   const [llmConfigs, setLlmConfigs] = useState<LLMConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
-  // Removed apiKeyInput and apiKeyStatus states as they are handled by LLMConfigManager
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false); // Re-add state for modal visibility
 
 
-  // Listener for analysis errors & fetch initial LLM configs
+  // Listener for analysis errors & fetch initial LLM configs & setup stream listeners
   useEffect(() => {
     // Fetch LLM configurations on mount
     const fetchInitialConfigs = async () => {
@@ -55,13 +56,60 @@ function App() {
     };
     fetchInitialConfigs();
 
-    const removeErrorListener = window.electronAPI.onAnalysisError((errorMsg) => {
+    // Setup analysis error listener
+    const removeAnalysisErrorListener = window.electronAPI.onAnalysisError((errorMsg) => {
       console.error('Received analysis error from main:', errorMsg);
       setError(`Analysis Error: ${errorMsg}`);
       setIsLoading(false); // Ensure loading state is reset
     });
-    return () => removeErrorListener();
-  }, []);
+
+    // Setup LLM stream listeners
+    const removeChunkListener = window.electronAPI.onLLMChunk((chunk) => {
+        // Basic parsing for <think> tags
+        const thinkRegex = /<think>(.*?)<\/think>/gs; // 's' flag for multiline
+        let lastIndex = 0;
+        let responseChunk = '';
+        let thinkChunk = '';
+        let match;
+
+        while ((match = thinkRegex.exec(chunk)) !== null) {
+            // Append text before the <think> tag to responseChunk
+            responseChunk += chunk.substring(lastIndex, match.index);
+            // Append content inside <think> tag to thinkChunk
+            thinkChunk += match[1]; // Group 1 captures content inside tags
+            lastIndex = thinkRegex.lastIndex;
+        }
+        // Append any remaining text after the last </think> tag
+        responseChunk += chunk.substring(lastIndex);
+
+        // Update states
+        if (thinkChunk) {
+            setThinkingSteps(prev => prev + thinkChunk);
+        }
+        if (responseChunk) {
+            setLlmResponse(prev => prev + responseChunk);
+        }
+    });
+
+    const removeStreamEndListener = window.electronAPI.onLLMStreamEnd(() => {
+        console.log("Stream ended in renderer.");
+        setIsSending(false); // Reset sending state when stream finishes
+    });
+
+     const removeStreamErrorListener = window.electronAPI.onLLMStreamError((errorMsg) => {
+        console.error("Received stream error from main:", errorMsg);
+        setError(`LLM Stream Error: ${errorMsg}`);
+        setIsSending(false); // Reset sending state on error
+    });
+
+    // Cleanup function to remove all listeners
+    return () => {
+        removeAnalysisErrorListener();
+        removeChunkListener();
+        removeStreamEndListener();
+        removeStreamErrorListener();
+    };
+  }, []); // Empty dependency array ensures this runs only once on mount
 
   // Effect to compile context when selected files change
   useEffect(() => {
@@ -156,30 +204,27 @@ function App() {
           setError("Compiled context and query are required to send to LLM.");
           return;
       }
-      setIsSending(true);
+      setIsSending(true); // Indicate that we are waiting for the stream to start/finish
       setError(null);
-      setLlmResponse('');
+      setLlmResponse(''); // Clear previous response
+      setThinkingSteps(''); // Clear previous thinking steps
 
-      try {
-          console.log(`Sending prompt using config ${selectedConfigId} and model ${selectedModel}...`);
-          if (!selectedConfigId || !selectedModel) {
-              throw new Error("Configuration or model not selected.");
-          }
-          // Send configId and model instead of 'llm' string
-          const response = await window.electronAPI.sendPrompt({
-              context: compiledContext,
-              query: query,
-              configId: selectedConfigId, // Pass selected config ID
-              model: selectedModel, // Pass selected model
-          });
-          console.log("LLM response received.");
-          setLlmResponse(response);
-      } catch (err) {
-          console.error("Error sending prompt:", err);
-          setError(err instanceof Error ? err.message : String(err));
-      } finally {
+      if (!selectedConfigId || !selectedModel) {
+          setError("Configuration or model not selected.");
           setIsSending(false);
+          return;
       }
+
+      console.log(`Requesting stream using config ${selectedConfigId} and model ${selectedModel}...`);
+      // Initiate the stream request (fire-and-forget from renderer's perspective)
+      // Response chunks will arrive via listeners set up in useEffect
+      window.electronAPI.sendPromptStreamRequest({
+          context: compiledContext,
+          query: query,
+          configId: selectedConfigId,
+          model: selectedModel,
+      });
+      // Note: We don't await here. isSending state will be reset by stream end/error listeners.
     };
 
   // Handler for file selection changes from FileTree
@@ -211,8 +256,7 @@ function App() {
           </button>
         {selectedPath && <p>Path: {selectedPath}</p>}
 
-        {/* LLM Configuration Manager */}
-        <LLMConfigManager />
+        {/* LLM Configuration Manager Removed from here */}
 
         {/* File Tree Display */}
         <FileTree
@@ -252,6 +296,9 @@ function App() {
       {/* --- Right Pane --- */}
       <aside className="right-pane">
         <h3>LLM Interaction</h3>
+         <button onClick={() => setIsSettingsModalOpen(true)} style={{ marginBottom: '1rem', float: 'right', padding: '0.2rem 0.5rem' }}>
+            Manage Configs
+        </button>
         {/* Configuration Selection */}
         <div>
             <label htmlFor="config-select">Configuration: </label>
@@ -300,8 +347,18 @@ function App() {
             {isSending ? 'Sending...' : 'Send to LLM'}
         </button>
         <div className="response-pane">
+           {/* Display Thinking Steps */}
+           {thinkingSteps && (
+                <div className="thinking-steps-area" style={{ marginBottom: '1rem', borderBottom: '1px dashed var(--border-color)', paddingBottom: '1rem', opacity: 0.7 }}>
+                    <h4>Thinking...</h4>
+                    {/* Use pre-wrap for basic formatting of thinking steps */}
+                    <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', fontSize: '0.8rem' }}>
+                        <code>{thinkingSteps}</code>
+                    </pre>
+                </div>
+           )}
           <h4>Response</h4>
-          {isSending && <p>Waiting for response...</p>}
+          {isSending && !thinkingSteps && <p>Waiting for response...</p>} {/* Show only if not already thinking/streaming */}
           {error && <p className="error-display">Error: {error}</p>}
           <div className="response-display-area"> {/* Use a div for scroll container */}
             <ReactMarkdown
@@ -338,6 +395,19 @@ function App() {
            )}
         </div>
       </aside>
+
+       {/* Settings Modal */}
+      {isSettingsModalOpen && (
+        <div className="modal-backdrop" onClick={() => setIsSettingsModalOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}> {/* Prevent closing when clicking inside modal */}
+            <button className="modal-close-button" onClick={() => setIsSettingsModalOpen(false)}>X</button>
+            <h2>LLM Configuration Management</h2>
+            {/* Pass setLlmConfigs to allow manager to refresh list after add/delete? Or rely on useEffect fetch? */}
+            {/* For now, rely on useEffect fetch after modal closes or add manual refresh */}
+            <LLMConfigManager />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

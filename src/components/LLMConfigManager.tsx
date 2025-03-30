@@ -94,6 +94,46 @@ const LLMConfigManager: React.FC = () => {
     }
   };
 
+  const handleFetchModels = async (configId: string) => {
+    setError(null);
+    setIsLoading(true); // Indicate loading while fetching
+    console.log(`Fetching models for config: ${configId}`);
+    try {
+        const fetchedModels = await window.electronAPI.fetchModelsForConfig(configId);
+        if (fetchedModels) {
+            console.log(`Fetched models:`, fetchedModels);
+            // Update the specific config in the local state
+            setConfigs(prevConfigs => {
+                const configIndex = prevConfigs.findIndex(c => c.id === configId);
+                if (configIndex === -1) return prevConfigs; // Should not happen if button is visible
+
+                const updatedConfig = { ...prevConfigs[configIndex], models: fetchedModels };
+
+                // Also update the config in the persistent store
+                window.electronAPI.updateLLMConfig(updatedConfig)
+                    .then(success => {
+                        if (!success) console.error(`Failed to persist updated models for config ${configId}`);
+                        else console.log(`Persisted updated models for config ${configId}`);
+                    })
+                    .catch(err => console.error(`Error persisting updated models for config ${configId}:`, err));
+
+                // Return the updated list for local state
+                const newConfigs = [...prevConfigs];
+                newConfigs[configIndex] = updatedConfig;
+                return newConfigs;
+            });
+            setError(null); // Clear any previous error
+        } else {
+            setError(`Failed to fetch models for config ${configId}. Check endpoint or API key.`);
+        }
+    } catch (err) {
+        console.error("Error fetching models:", err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch models');
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
   // TODO: Add Edit functionality later
 
   return (
@@ -113,10 +153,15 @@ const LLMConfigManager: React.FC = () => {
                 <small>Models: {config.models.join(', ')}</small><br/>
                 <small>Endpoint: {config.apiEndpoint}</small>
               </span>
-              {/* Add Edit button later */}
-              <button onClick={() => handleDeleteConfig(config.id)} style={{ marginLeft: '1rem', padding: '0.2rem 0.5rem', fontSize: '0.8rem' }} disabled={isLoading}>
-                Delete
-              </button>
+              <div> {/* Wrapper for buttons */}
+                  <button onClick={() => handleFetchModels(config.id)} style={{ marginLeft: '0.5rem', padding: '0.2rem 0.5rem', fontSize: '0.8rem' }} disabled={isLoading}>
+                    Fetch Models
+                  </button>
+                  {/* Add Edit button later */}
+                  <button onClick={() => handleDeleteConfig(config.id)} style={{ marginLeft: '0.5rem', padding: '0.2rem 0.5rem', fontSize: '0.8rem' }} disabled={isLoading}>
+                    Delete
+                  </button>
+              </div>
             </li>
           ))}
         </ul>
