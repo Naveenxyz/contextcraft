@@ -9,6 +9,14 @@ export interface DirectoryItem {
   children?: DirectoryItem[];
 }
 
+// Define the structure for Project data from the database
+export interface Project {
+  id: number;
+  folderPath: string;
+  name: string;
+  lastAccessed: string; // ISO date string
+}
+
 // Import LLMConfig type
 import { LLMConfig } from './llmConfig';
 
@@ -31,6 +39,9 @@ export interface IElectronAPI {
   updateLLMConfig: (config: LLMConfig, apiKey?: string) => Promise<boolean>; // Update config, optionally update API key too
   deleteLLMConfig: (configId: string) => Promise<boolean>; // Delete config and associated API key
   fetchModelsForConfig: (configId: string) => Promise<string[] | null>; // Fetch models for a config
+
+  // Project History Management
+  getAllProjects: () => Promise<Project[]>; // Get list of saved projects
 
   // Main -> Renderer (Send/On)
   // These functions now return a cleanup function to remove the listener

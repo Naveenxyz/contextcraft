@@ -18,7 +18,7 @@ export default defineConfig({
           build: {
             // Tell Vite to treat node_modules as external, especially native ones
             rollupOptions: {
-              external: ['electron', 'keytar', 'axios', 'electron-store', 'fs/promises', 'path'], // Add other node built-ins or native modules if needed
+              external: ['electron', 'keytar', 'axios', 'electron-store', 'fs/promises', 'path', 'sqlite3'], // Added sqlite3
             },
           },
         },

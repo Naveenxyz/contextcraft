@@ -1,11 +1,139 @@
 "use strict";
 const electron = require("electron");
-const path = require("node:path");
+const path$1 = require("node:path");
 const keytar = require("keytar");
 const axios = require("axios");
 const fs = require("fs/promises");
 const Store = require("electron-store");
 const node_crypto = require("node:crypto");
+const sqlite3 = require("sqlite3");
+const path = require("path");
+const sqlite = sqlite3.verbose();
+const dbPath = path.join(electron.app.getPath("userData"), "projects.db");
+let db = null;
+const initDatabase = () => {
+  return new Promise((resolve, reject) => {
+    db = new sqlite.Database(dbPath, (err) => {
+      if (err) {
+        console.error("Error opening database:", err.message);
+        reject(err);
+      } else {
+        console.log("Connected to the SQLite database.");
+        db == null ? void 0 : db.run(`CREATE TABLE IF NOT EXISTS projects (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          folderPath TEXT NOT NULL UNIQUE,
+          name TEXT,
+          lastAccessed DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err2) => {
+          if (err2) {
+            console.error("Error creating projects table:", err2.message);
+            reject(err2);
+          } else {
+            console.log("Projects table checked/created successfully.");
+            resolve();
+          }
+        });
+      }
+    });
+  });
+};
+const addProject = (folderPath, name) => {
+  return new Promise((resolve, reject) => {
+    if (!db) {
+      return reject(new Error("Database not initialized."));
+    }
+    const projectName = path.basename(folderPath);
+    const sql = `INSERT OR IGNORE INTO projects (folderPath, name, lastAccessed) VALUES (?, ?, ?)`;
+    db.run(sql, [folderPath, projectName, (/* @__PURE__ */ new Date()).toISOString()], function(err) {
+      if (err) {
+        console.error("Error adding project:", err.message);
+        reject(err);
+      } else {
+        if (this.lastID > 0) {
+          console.log(`Project added/updated with ID: ${this.lastID}`);
+          resolve(this.lastID);
+        } else {
+          getProjectByPath(folderPath).then((project) => {
+            if (project) {
+              updateProjectAccessTime(project.id).then(() => resolve(project.id)).catch(reject);
+            } else {
+              reject(new Error("Failed to add or find project."));
+            }
+          }).catch(reject);
+        }
+      }
+    });
+  });
+};
+const getProjectByPath = (folderPath) => {
+  return new Promise((resolve, reject) => {
+    if (!db) {
+      return reject(new Error("Database not initialized."));
+    }
+    const sql = `SELECT * FROM projects WHERE folderPath = ?`;
+    db.get(sql, [folderPath], (err, row) => {
+      if (err) {
+        console.error("Error fetching project by path:", err.message);
+        reject(err);
+      } else {
+        resolve(row || null);
+      }
+    });
+  });
+};
+const updateProjectAccessTime = (id) => {
+  return new Promise((resolve, reject) => {
+    if (!db) {
+      return reject(new Error("Database not initialized."));
+    }
+    const sql = `UPDATE projects SET lastAccessed = ? WHERE id = ?`;
+    db.run(sql, [(/* @__PURE__ */ new Date()).toISOString(), id], (err) => {
+      if (err) {
+        console.error("Error updating project access time:", err.message);
+        reject(err);
+      } else {
+        console.log(`Updated access time for project ID: ${id}`);
+        resolve();
+      }
+    });
+  });
+};
+const getAllProjects = () => {
+  return new Promise((resolve, reject) => {
+    if (!db) {
+      return reject(new Error("Database not initialized."));
+    }
+    const sql = `SELECT * FROM projects ORDER BY lastAccessed DESC`;
+    db.all(sql, [], (err, rows) => {
+      if (err) {
+        console.error("Error fetching all projects:", err.message);
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+};
+const closeDatabase = () => {
+  return new Promise((resolve, reject) => {
+    if (!db) {
+      return resolve();
+    }
+    db.close((err) => {
+      if (err) {
+        console.error("Error closing database:", err.message);
+        reject(err);
+      } else {
+        console.log("Database connection closed.");
+        db = null;
+        resolve();
+      }
+    });
+  });
+};
+electron.app.on("will-quit", async () => {
+  await closeDatabase();
+});
 const KEYTAR_SERVICE_NAME = "ContextCraftLLMKeys";
 let storeInstance;
 const StoreConstructor = Store.default || Store;
@@ -21,10 +149,9 @@ if (require("electron-squirrel-startup")) {
 }
 const createWindow = () => {
   const mainWindow = new electron.BrowserWindow({
-    width: 1200,
-    height: 800,
+    // Removed fixed width and height to allow resizing/maximization
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path$1.join(__dirname, "preload.js"),
       // Reverted back to .js
       contextIsolation: true,
       // Recommended for security
@@ -36,19 +163,53 @@ const createWindow = () => {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, `../renderer/index.html`));
+    mainWindow.loadFile(path$1.join(__dirname, `../renderer/index.html`));
   }
   return mainWindow;
 };
-electron.app.whenReady().then(() => {
+electron.app.whenReady().then(async () => {
+  try {
+    await initDatabase();
+    console.log("Database initialized successfully.");
+  } catch (error) {
+    console.error("Failed to initialize database:", error);
+    electron.dialog.showErrorBox("Database Error", "Failed to initialize the project database. Project history will not be available.");
+  }
   const mainWindow = createWindow();
+  electron.ipcMain.handle("db:addProject", async (_, folderPath) => {
+    try {
+      const projectId = await addProject(folderPath);
+      console.log(`Project added/updated in DB: ${folderPath} (ID: ${projectId})`);
+      return projectId;
+    } catch (error) {
+      console.error("Error adding project via IPC:", error);
+      return null;
+    }
+  });
+  electron.ipcMain.handle("db:getAllProjects", async () => {
+    try {
+      const projects = await getAllProjects();
+      return projects;
+    } catch (error) {
+      console.error("Error getting projects via IPC:", error);
+      return [];
+    }
+  });
   electron.ipcMain.handle("dialog:openDirectory", async () => {
     const { canceled, filePaths } = await electron.dialog.showOpenDialog(mainWindow, {
       // Pass window reference
       properties: ["openDirectory"]
     });
     if (!canceled && filePaths.length > 0) {
-      return filePaths[0];
+      const selectedPath = filePaths[0];
+      try {
+        await addProject(selectedPath);
+        console.log(`Added/updated project in DB from dialog: ${selectedPath}`);
+      } catch (error) {
+        console.error(`Failed to add project ${selectedPath} to database:`, error);
+        electron.dialog.showErrorBox("Database Error", `Failed to save project ${path$1.basename(selectedPath)} to history.`);
+      }
+      return selectedPath;
     }
     return void 0;
   });
@@ -96,7 +257,7 @@ electron.app.whenReady().then(() => {
       for (const entry of entries) {
         if (entry.isDirectory() && ignoreDirs.includes(entry.name)) continue;
         if (entry.isFile() && ignoreFiles.includes(entry.name)) continue;
-        const fullPath = path.join(dirPath, entry.name);
+        const fullPath = path$1.join(dirPath, entry.name);
         if (entry.isDirectory()) {
           const children = await analyzeDirectoryRecursive(fullPath, currentWindow);
           structure.push({

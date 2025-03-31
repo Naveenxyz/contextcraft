@@ -30,6 +30,9 @@ const electronAPI = {
   updateLLMConfig: (config, apiKey) => electron.ipcRenderer.invoke("llm:updateConfig", config, apiKey),
   deleteLLMConfig: (configId) => electron.ipcRenderer.invoke("llm:deleteConfig", configId),
   fetchModelsForConfig: (configId) => electron.ipcRenderer.invoke("llm:fetchModels", configId),
+  // Project History Management
+  getAllProjects: () => electron.ipcRenderer.invoke("db:getAllProjects"),
+  // Add this line
   // Main -> Renderer (Send/On pattern - requires cleanup)
   onUpdateContext: (callback) => {
     const handler = (_event, context) => callback(context);

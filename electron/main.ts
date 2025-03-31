@@ -5,6 +5,7 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import Store from 'electron-store'; // Revert back to default import
 import { randomUUID } from 'node:crypto'; // For generating unique IDs
+import { initDatabase, addProject, getAllProjects, closeDatabase } from './database'; // Import database functions
 
 // Define the service name for keytar (used for API keys)
 const KEYTAR_SERVICE_NAME = 'ContextCraftLLMKeys';
@@ -47,8 +48,7 @@ if (require('electron-squirrel-startup')) {
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    // Removed fixed width and height to allow resizing/maximization
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'), // Reverted back to .js
       contextIsolation: true, // Recommended for security
@@ -75,18 +75,68 @@ const createWindow = () => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => { // Make async for await
+  // Initialize the database first
+  try {
+    await initDatabase();
+    console.log('Database initialized successfully.');
+  } catch (error) {
+    console.error('Failed to initialize database:', error);
+    // Handle error appropriately - maybe show an error dialog and quit?
+    // For now, we'll log and continue, but the app might not function correctly.
+    dialog.showErrorBox('Database Error', 'Failed to initialize the project database. Project history will not be available.');
+    // Consider app.quit() here if the DB is critical
+  }
+
   const mainWindow = createWindow(); // Get the window instance
 
   // --- IPC Handlers ---
 
-  // Handle File/Directory Selection
+  // --- Project Management IPC Handlers ---
+
+  // Handle adding a project (folder path)
+  ipcMain.handle('db:addProject', async (_, folderPath: string) => {
+    try {
+      const projectId = await addProject(folderPath);
+      console.log(`Project added/updated in DB: ${folderPath} (ID: ${projectId})`);
+      return projectId; // Return the ID (new or existing)
+    } catch (error) {
+      console.error('Error adding project via IPC:', error);
+      return null; // Indicate failure
+    }
+  });
+
+  // Handle getting all projects
+  ipcMain.handle('db:getAllProjects', async () => {
+    try {
+      const projects = await getAllProjects();
+      return projects;
+    } catch (error) {
+      console.error('Error getting projects via IPC:', error);
+      return []; // Return empty array on failure
+    }
+  });
+
+  // --- End Project Management Handlers ---
+
+
+  // Handle File/Directory Selection (Modified to add project to DB)
   ipcMain.handle('dialog:openDirectory', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, { // Pass window reference
       properties: ['openDirectory']
     });
     if (!canceled && filePaths.length > 0) {
-      return filePaths[0];
+      const selectedPath = filePaths[0];
+      try {
+        // Add the selected path to the database
+        await addProject(selectedPath);
+        console.log(`Added/updated project in DB from dialog: ${selectedPath}`);
+      } catch (error) {
+        console.error(`Failed to add project ${selectedPath} to database:`, error);
+        // Optionally notify the user, but still return the path for immediate use
+        dialog.showErrorBox('Database Error', `Failed to save project ${path.basename(selectedPath)} to history.`);
+      }
+      return selectedPath; // Return the path regardless of DB success for immediate use
     }
     return undefined;
   });

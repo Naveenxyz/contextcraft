@@ -12,6 +12,14 @@ interface LLMConfig {
   defaultModel?: string;
 }
 
+// Define the structure for Project data from the database
+interface Project {
+  id: number;
+  folderPath: string;
+  name: string;
+  lastAccessed: string; // ISO date string
+}
+
 
 // Define the API structure that will be exposed to the renderer process
 const electronAPI = {
@@ -41,6 +49,9 @@ const electronAPI = {
   updateLLMConfig: (config: LLMConfig, apiKey?: string): Promise<boolean> => ipcRenderer.invoke('llm:updateConfig', config, apiKey),
   deleteLLMConfig: (configId: string): Promise<boolean> => ipcRenderer.invoke('llm:deleteConfig', configId),
   fetchModelsForConfig: (configId: string): Promise<string[] | null> => ipcRenderer.invoke('llm:fetchModels', configId),
+
+  // Project History Management
+  getAllProjects: (): Promise<Project[]> => ipcRenderer.invoke('db:getAllProjects'), // Add this line
 
   // Main -> Renderer (Send/On pattern - requires cleanup)
   onUpdateContext: (callback: (context: string) => void) => {

@@ -15,24 +15,38 @@
   --input-bg-color: #ffffff;
   --input-border-color: #cccccc;
   --input-text-color: #333333;
+  --list-hover-bg-color: #e9f5ff; /* Light theme hover */
+  --list-border-color: #eee; /* Light theme list border */
+  --card-bg-color: #ffffff;
+  --card-border-color: #e0e0e0;
+  --card-hover-bg-color: #f5f5f5;
+  --card-hover-border-color: #d0d0d0;
+  --secondary-text-color: #666666;
 }
 
 html.dark { /* Variables for dark theme */
-  --bg-color: #242424;
-  --text-color: #eeeeee;
-  --pane-bg-color: #333333;
-  --border-color: #555555;
+  --bg-color: #1a1a1a; /* Slightly darker background */
+  --text-color: #e0e0e0; /* Slightly off-white text */
+  --pane-bg-color: #2a2a2a; /* Darker pane */
+  --border-color: #444444; /* Softer border */
   --pre-bg-color: #2d2d2d;
   --pre-border-color: #444444;
-  --button-bg-color: #555555;
-  --button-hover-bg-color: #666666;
+  --button-bg-color: #3a3a3a; /* Darker button */
+  --button-hover-bg-color: #4a4a4a;
   --error-bg-color: #5d3030;
   --error-text-color: #ffcdd2;
   --error-border-color: #e57373;
-  --heading-color: #cccccc;
-  --input-bg-color: #3a3a3a;
-  --input-border-color: #555555;
-  --input-text-color: #eeeeee;
+  --heading-color: #d0d0d0; /* Lighter heading */
+  --input-bg-color: #2c2c2c; /* Darker input */
+  --input-border-color: #444444;
+  --input-text-color: #e0e0e0;
+  --list-hover-bg-color: #4a4a4a; /* Dark theme hover */
+  --list-border-color: #444; /* Dark theme list border */
+  --card-bg-color: #2c2c2c; /* Dark card background */
+  --card-border-color: #444444; /* Dark card border */
+  --card-hover-bg-color: #383838; /* Slightly lighter hover */
+  --card-hover-border-color: #555555;
+  --secondary-text-color: #999999; /* Lighter secondary text */
 }
 
 /* Reset basic styles */
@@ -50,6 +64,7 @@ body {
 
 #root {
   height: 100vh;
+  width: 100%; /* Explicitly set width */
   display: flex; /* Make root a flex container */
 }
 
@@ -60,12 +75,12 @@ body {
   width: 100%;
   height: 100vh;
   background-color: var(--bg-color); /* Use variable */
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); /* Keep shadow or theme it */
+  /* Removed box-shadow for flatter look */
 }
 
-/* Panes styling */
-.left-pane,
-.right-pane {
+/* --- Default Pane Styling (Context Selection Mode) --- */
+.app-container.context-mode .left-pane,
+.app-container.context-mode .right-pane {
   flex: 0 0 250px; /* Fixed width for side panes */
   padding: 1rem;
   border-right: 1px solid var(--border-color); /* Use variable */
@@ -75,12 +90,12 @@ body {
   background-color: var(--pane-bg-color); /* Use variable */
 }
 
-.right-pane {
+.app-container.context-mode .right-pane {
   border-right: none;
   border-left: 1px solid var(--border-color); /* Use variable */
 }
 
-.center-pane {
+.app-container.context-mode .center-pane {
   flex: 1; /* Takes up remaining space */
   display: flex;
   flex-direction: column; /* Stack context and query vertically */
@@ -88,7 +103,82 @@ body {
   overflow: hidden; /* Prevent center pane itself from scrolling */
 }
 
-/* Inner panes within center */
+/* --- Chat Mode Specific Styling --- */
+.app-container.chat-mode .left-pane {
+  flex: 0 0 250px; /* Keep file tree width fixed for now */
+  /* Consider making this resizable or collapsible later */
+  padding: 1rem;
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background-color: var(--pane-bg-color);
+}
+
+.chat-view {
+  flex: 1; /* Takes up the remaining space */
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  overflow: hidden; /* Prevent scrolling on the main view, handle internally */
+  height: 100vh; /* Ensure it takes full height */
+  box-sizing: border-box;
+}
+
+.chat-history-area {
+  flex-grow: 1; /* Takes most of the vertical space */
+  overflow-y: auto; /* Allow scrolling for chat history */
+  margin-bottom: 1rem;
+  padding-right: 0.5rem; /* Space for scrollbar */
+}
+
+.chat-input-area {
+  flex-shrink: 0; /* Prevent shrinking */
+  border-top: 1px solid var(--border-color);
+  padding-top: 1rem;
+  display: flex;
+  flex-direction: column; /* Stack selectors, textarea, button */
+}
+
+.llm-config-selector {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start; /* Align items to the start */
+  align-items: center;
+  margin-bottom: 0.5rem;
+  gap: 1rem; /* Add some space between config and model selectors */
+}
+
+.llm-config-selector > div {
+  display: flex;
+  align-items: center;
+}
+
+.llm-config-selector label {
+  margin-right: 0.5rem;
+  white-space: nowrap; /* Prevent label wrapping */
+}
+
+.llm-config-selector select {
+  /* Adjust width if needed, maybe max-width or specific width */
+  width: auto; /* Allow select to size based on content */
+  min-width: 150px; /* Ensure a minimum usable width */
+  margin: 0; /* Reset margins */
+}
+
+
+.chat-input-area textarea {
+  width: 100%;
+  margin-bottom: 0.5rem; /* Space between textarea and button */
+  resize: vertical; /* Allow vertical resize */
+}
+
+.chat-input-area button {
+  align-self: flex-end; /* Position button to the right */
+}
+
+
+/* --- Common Inner Pane Styling --- */
 .context-pane,
 .query-pane,
 .response-pane { /* Added response-pane for consistency */
@@ -110,7 +200,7 @@ body {
    flex: 1; /* Response takes available space in right pane */
    overflow: hidden; /* Hide overflow, rely on inner pre */
    margin-top: 1rem;
-   border-top: 1px solid #eee;
+   border-top: 1px solid var(--border-color); /* Use variable */
    padding-top: 1rem;
 }
 
@@ -130,7 +220,7 @@ textarea {
 }
 
 .context-display-area,
-.response-display-area {
+.response-display-area { /* Shared style for code/text display */
   flex-grow: 1; /* Allow pre to take up available space */
   background-color: var(--pre-bg-color); /* Use variable */
   border: 1px solid var(--pre-border-color); /* Use variable */
@@ -184,7 +274,7 @@ button:disabled {
 }
 
 /* Headings */
-h3, h4 {
+h2, h3, h4 {
   margin-top: 0;
   margin-bottom: 0.5rem;
   color: var(--heading-color); /* Use variable */
@@ -241,4 +331,149 @@ select {
   padding: 0.5rem;
   line-height: 1;
   color: var(--text-color);
+}
+
+/* Thinking steps specific styling */
+.thinking-steps-area {
+  margin-bottom: 1rem;
+  border-bottom: 1px dashed var(--border-color);
+  padding-bottom: 1rem;
+  opacity: 0.7;
+}
+.thinking-steps-area h4 {
+  margin-bottom: 0.3rem;
+}
+.thinking-steps-area pre {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 0.8rem;
+  margin: 0; /* Reset margin for pre inside this area */
+  padding: 0;
+  background-color: transparent; /* Inherit background */
+  border: none; /* Remove border */
+}
+
+/* --- Project Selection View Styles (Grid/Card Layout) --- */
+.project-selection-view {
+  /* Removed display: flex, flex-direction, align-items */
+  flex-grow: 1; /* Add this to make it fill the #root flex container */
+  height: 100vh;
+  /* width: 100%; - flex-grow makes this redundant */
+  padding: 3rem 4rem; /* Keep padding */
+  box-sizing: border-box;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  overflow-y: auto; /* Allow scrolling for the whole view */
+}
+
+.project-selection-view h2 {
+  margin-bottom: 2rem; /* Space below title */
+  font-size: 1.6rem; /* Slightly smaller title */
+  color: var(--heading-color);
+  font-weight: 600;
+  width: 100%; /* Ensure title spans width */
+  text-align: left;
+}
+
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); /* Responsive grid */
+  gap: 1.5rem; /* Space between cards */
+  width: 100%;
+  margin-bottom: 2rem; /* Space below grid */
+}
+
+.project-card {
+  background-color: var(--card-bg-color);
+  border: 1px solid var(--card-border-color);
+  border-radius: 8px; /* More rounded corners */
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; /* Align content left */
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+  min-height: 120px; /* Ensure a minimum card height */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); /* Subtle shadow */
+}
+
+html.dark .project-card {
+   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Darker shadow for dark theme */
+}
+
+
+.project-card:hover {
+  transform: translateY(-3px); /* Slight lift on hover */
+  background-color: var(--card-hover-bg-color);
+  border-color: var(--card-hover-border-color);
+}
+
+.project-card strong {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: 0.5rem; /* Space below title */
+  word-break: break-word; /* Break long names */
+}
+
+.project-card small {
+  font-size: 0.85rem;
+  color: var(--secondary-text-color); /* Use secondary text color */
+  line-height: 1.3;
+  margin-bottom: 0.2rem;
+}
+
+.project-card .project-path {
+  opacity: 0.7; /* Make path slightly less prominent */
+  word-break: break-all;
+  margin-bottom: 0.5rem; /* More space before last accessed */
+}
+
+.project-card .project-last-accessed {
+  margin-top: auto; /* Push last accessed to the bottom */
+  padding-top: 0.5rem; /* Add some space above it */
+}
+
+/* Special styling for the "New Project" card */
+.new-project-card {
+  justify-content: center; /* Center content vertically */
+  align-items: center; /* Center content horizontally */
+  text-align: center;
+  border-style: dashed; /* Dashed border */
+  border-width: 2px;
+}
+
+.new-project-card:hover {
+   border-color: var(--button-hover-bg-color); /* Use button hover color for border */
+}
+
+.new-project-icon {
+  font-size: 2.5rem;
+  line-height: 1;
+  margin-bottom: 0.8rem;
+  color: var(--secondary-text-color);
+}
+
+.new-project-card strong {
+  margin-bottom: 0.3rem;
+}
+
+.new-project-card small {
+   font-size: 0.9rem;
+}
+
+
+.project-selection-view .error-display {
+  /* Use existing error styles */
+  width: 100%; /* Span full width */
+  box-sizing: border-box;
+  text-align: center; /* Center error text */
+  margin-top: 2rem; /* Space above error */
+}
+
+/* Remove old list/button styles if they conflict */
+.project-selection-view .open-new-button,
+.project-selection-view .recent-projects-list {
+  display: none; /* Hide the old elements */
 }

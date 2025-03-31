@@ -10,10 +10,12 @@ import { DirectoryItem } from './types/electron'; // Import the DirectoryItem ty
 import FileTree from './components/FileTree'; // Import the FileTree component
 import LLMConfigManager from './components/LLMConfigManager'; // Import the LLM Config Manager
 import { LLMConfig } from './types/llmConfig'; // Import LLMConfig type
+import ChatView from './components/ChatView'; // Import the new ChatView component
+import ProjectSelectionView from './components/ProjectSelectionView'; // Import the ProjectSelectionView component
 
 function App() {
   const { theme, toggleTheme } = useTheme(); // Use the theme context
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null); // Path of the currently active project
   const [directoryTree, setDirectoryTree] = useState<DirectoryItem[] | null>(null); // State for the file tree structure
   const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]); // State for selected file paths
   const [compiledContext, setCompiledContext] = useState<string>(''); // State for the final context string
@@ -29,6 +31,13 @@ function App() {
   const [selectedConfigId, setSelectedConfigId] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false); // Re-add state for modal visibility
+
+  // --- New states for refactoring ---
+  const [viewMode, setViewMode] = useState<'contextSelection' | 'chatting'>('contextSelection');
+  const [pendingAddedFilePaths, setPendingAddedFilePaths] = useState<string[]>([]);
+  const [addedContext, setAddedContext] = useState<string>('');
+  const [chatHistoryContext, setChatHistoryContext] = useState<string>('');
+  // --- End new states ---
 
 
   // Listener for analysis errors & fetch initial LLM configs & setup stream listeners
@@ -158,252 +167,368 @@ function App() {
     compileContext();
   }, [selectedFilePaths]); // Re-run whenever selectedFilePaths changes
 
-  const handleSelectAndAnalyzeDirectory = async () => {
+  // Effect to process files added dynamically during chat
+  useEffect(() => {
+    const processPendingFiles = async () => {
+      if (pendingAddedFilePaths.length === 0) {
+        return; // Nothing to process
+      }
+
+      console.log('Processing pending added files:', pendingAddedFilePaths);
+      // Create a copy and clear the state immediately to prevent race conditions
+      const pathsToProcess = [...pendingAddedFilePaths];
+      setPendingAddedFilePaths([]);
+
+      try {
+        const fileContentsPromises = pathsToProcess.map(filePath =>
+          window.electronAPI.readFileContent(filePath)
+        );
+        const results = await Promise.all(fileContentsPromises);
+
+        let newlyAddedContext = '';
+        results.forEach((content, index) => {
+          const filePath = pathsToProcess[index];
+          if (content !== null) {
+            newlyAddedContext += `--- Added File: ${filePath} ---\n\n`;
+            newlyAddedContext += content;
+            newlyAddedContext += '\n\n';
+          } else {
+            console.warn(`Failed to read content for added file: ${filePath}`);
+            newlyAddedContext += `--- Failed to read added file: ${filePath} ---\n\n`;
+          }
+        });
+
+        // Append the newly fetched context to the existing addedContext
+        setAddedContext(prev => prev + newlyAddedContext);
+        console.log('Finished processing added files.');
+
+      } catch (err) {
+        console.error("Error processing pending added files:", err);
+        setError(err instanceof Error ? `Error adding file context: ${err.message}` : 'Unknown error adding file context');
+        // Decide if we should retry or just notify user. For now, just log and set error.
+      }
+    };
+
+    processPendingFiles();
+  }, [pendingAddedFilePaths]); // Run whenever pendingAddedFilePaths changes
+
+  // Function to analyze a directory once its path is known
+  const analyzeDirectory = async (path: string) => {
     setIsLoading(true);
     setError(null);
-    setDirectoryTree(null); // Reset tree
-    setSelectedFilePaths([]); // Reset selected files
-    setCompiledContext(''); // Reset compiled context
-    setSelectedPath(null);
-    setLlmResponse(''); // Clear previous response
-    setQuery(''); // Clear previous query
+    setDirectoryTree(null);
+    setSelectedFilePaths([]);
+    setCompiledContext('');
+    setLlmResponse('');
+    setQuery('');
+    setViewMode('contextSelection');
+    setAddedContext('');
+    setChatHistoryContext('');
+    setPendingAddedFilePaths([]);
 
     try {
-      console.log('Requesting directory selection...');
-      const path = await window.electronAPI.openDirectoryDialog();
-      console.log('Directory selected:', path);
-
-      if (path) {
-        setSelectedPath(path);
-        console.log(`Requesting analysis for: ${path}`);
-        const contextResult = await window.electronAPI.analyzeDirectory(path);
-        console.log('Analysis result received.');
-        // Basic check if the result indicates an error from main process
-        if (typeof contextResult === 'string') { // It's an error string
-            setError(contextResult);
-            setDirectoryTree(null);
-        } else { // It's the DirectoryItem[] tree
-            setDirectoryTree(contextResult);
-            // Reset compiled context until files are selected
-            setCompiledContext('');
-        }
+      setSelectedPath(path); // Set the active project path
+      console.log(`Requesting analysis for: ${path}`);
+      const contextResult = await window.electronAPI.analyzeDirectory(path);
+      console.log('Analysis result received.');
+      if (typeof contextResult === 'string') {
+        setError(contextResult);
+        setDirectoryTree(null);
       } else {
-        console.log('Directory selection cancelled.');
+        setDirectoryTree(contextResult);
+        setCompiledContext(''); // Reset compiled context until files are selected
       }
     } catch (err) {
-      console.error("Error during directory selection or analysis:", err);
-      setError(err instanceof Error ? err.message : String(err));
+      console.error(`Error during analysis for path ${path}:`, err);
+      setError(err instanceof Error ? `Analysis Error: ${err.message}` : String(err));
+      setSelectedPath(null); // Reset path if analysis fails
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Function to handle opening a new directory via dialog
+  const handleOpenNewProject = async () => {
+    setIsLoading(true); // Set loading while dialog is open and potentially analyzing
+    setError(null);
+    try {
+      console.log('Requesting directory selection...');
+      const path = await window.electronAPI.openDirectoryDialog(); // This now also adds to DB
+      console.log('Directory selected:', path);
+      if (path) {
+        await analyzeDirectory(path); // Analyze the newly selected path
+      } else {
+        console.log('Directory selection cancelled.');
+        setIsLoading(false); // Reset loading if cancelled
+      }
+    } catch (err) {
+      console.error("Error opening new project directory:", err);
+      setError(err instanceof Error ? `Error opening directory: ${err.message}` : String(err));
+      setIsLoading(false); // Reset loading on error
+    }
+    // Note: setIsLoading(false) is handled within analyzeDirectory on success/error
+  };
+
+  // Function to handle selecting a recent project
+  const handleRecentProjectSelect = (path: string) => {
+    console.log(`Selected recent project: ${path}`);
+    analyzeDirectory(path); // Analyze the selected recent path
+  };
+
   const handleSendPrompt = async () => {
-      // Use compiledContext now
-      if (!compiledContext || !query) {
-          setError("Compiled context and query are required to send to LLM.");
-          return;
-      }
-      setIsSending(true); // Indicate that we are waiting for the stream to start/finish
-      setError(null);
-      setLlmResponse(''); // Clear previous response
-      setThinkingSteps(''); // Clear previous thinking steps
+    if (!query) {
+      setError("Query cannot be empty.");
+      return;
+    }
+    if (!selectedConfigId || !selectedModel) {
+      setError("Configuration or model not selected.");
+      return;
+    }
 
-      if (!selectedConfigId || !selectedModel) {
-          setError("Configuration or model not selected.");
-          setIsSending(false);
-          return;
-      }
+    let contextToSend = '';
+    let nextChatHistoryContext = '';
 
-      console.log(`Requesting stream using config ${selectedConfigId} and model ${selectedModel}...`);
-      // Initiate the stream request (fire-and-forget from renderer's perspective)
-      // Response chunks will arrive via listeners set up in useEffect
+    if (viewMode === 'contextSelection') {
+      if (!compiledContext) {
+        setError("Please select files to compile context first.");
+        return;
+      }
+      contextToSend = compiledContext;
+      nextChatHistoryContext = compiledContext; // Initialize chat history
+      console.log("Sending initial prompt (contextSelection mode)...");
+    } else { // chatting mode
+      // Combine previous history with any newly added context
+      contextToSend = chatHistoryContext + (addedContext ? '\n\n' + addedContext : '');
+      nextChatHistoryContext = contextToSend; // Update history with what's being sent
+      console.log("Sending follow-up prompt (chatting mode)...");
+    }
+
+    setIsSending(true);
+    setError(null);
+    setLlmResponse('');
+    setThinkingSteps('');
+
+    console.log(`Requesting stream using config ${selectedConfigId} and model ${selectedModel}...`);
+    try {
+      // Initiate the stream request
       window.electronAPI.sendPromptStreamRequest({
-          context: compiledContext,
-          query: query,
-          configId: selectedConfigId,
-          model: selectedModel,
+        context: contextToSend,
+        query: query,
+        configId: selectedConfigId,
+        model: selectedModel,
       });
-      // Note: We don't await here. isSending state will be reset by stream end/error listeners.
-    };
+
+      // --- State updates after successfully initiating the request ---
+      setChatHistoryContext(nextChatHistoryContext); // Update history
+      setAddedContext(''); // Clear added context as it's now part of history
+      setQuery(''); // Clear the query input
+
+      // Switch to chat mode after the first successful send
+      if (viewMode === 'contextSelection') {
+        setViewMode('chatting');
+        console.log("Switched to chatting mode.");
+      }
+      // Note: isSending will be reset by stream end/error listeners
+
+    } catch (err) {
+      // This catch block might not be effective for errors *during* the stream,
+      // as sendPromptStreamRequest is likely fire-and-forget.
+      // Errors during the stream are handled by the onLLMStreamError listener.
+      console.error("Error initiating prompt stream request:", err);
+      setError(err instanceof Error ? `Error sending prompt: ${err.message}` : 'Unknown error sending prompt');
+      setIsSending(false); // Ensure sending state is reset on initiation error
+    }
+  };
 
   // Handler for file selection changes from FileTree
   const handleFileSelectionChange = (filePath: string, isSelected: boolean) => {
-        setSelectedFilePaths(prevSelected => {
-            if (isSelected) {
-                // Add file path if it's not already included
-                return prevSelected.includes(filePath) ? prevSelected : [...prevSelected, filePath];
-            } else {
-                // Remove file path
-                return prevSelected.filter(path => path !== filePath);
-            }
-        });
-        // TODO: Trigger context compilation when selection changes (or via a button)
-        // For now, just log the change
-        console.log('Selected files:', isSelected ? [...selectedFilePaths, filePath] : selectedFilePaths.filter(path => path !== filePath));
-    };
+    if (viewMode === 'contextSelection') {
+      // Update initial selection list, triggering compiledContext useEffect
+      setSelectedFilePaths(prevSelected => {
+        if (isSelected) {
+          return prevSelected.includes(filePath) ? prevSelected : [...prevSelected, filePath];
+        } else {
+          return prevSelected.filter(path => path !== filePath);
+        }
+      });
+      console.log('Context Selection: Updated selectedFilePaths');
+    } else if (viewMode === 'chatting') {
+      // Handle dynamic additions during chat
+      if (isSelected) {
+        // Add to pending list for processing by useEffect
+        setPendingAddedFilePaths(prevPending =>
+          prevPending.includes(filePath) ? prevPending : [...prevPending, filePath]
+        );
+        console.log('Chatting: Added to pendingAddedFilePaths:', filePath);
+      } else {
+        // Currently ignoring deselection during chat for simplicity
+        // Optional: Remove from pendingAddedFilePaths if it hasn't been processed yet
+        // setPendingAddedFilePaths(prevPending => prevPending.filter(path => path !== filePath));
+        console.log('Chatting: Deselection ignored for:', filePath);
+      }
+    }
+  };
 
+  // Render Project Selection View if no path is selected
+  if (!selectedPath) {
+    return (
+      <ProjectSelectionView
+        onProjectSelect={handleRecentProjectSelect}
+        onOpenNewProject={handleOpenNewProject}
+        isLoading={isLoading}
+      />
+    );
+  }
+
+  // Render main application view if a path is selected
   return (
-    <div className="app-container">
-      {/* --- Left Pane --- */}
-        <aside className="left-pane">
-          <h3>Settings / Files</h3>
-           <button onClick={toggleTheme} style={{ marginBottom: '1rem' }}>
-            Toggle Theme ({theme === 'light' ? 'Dark' : 'Light'})
-          </button>
-          <button onClick={handleSelectAndAnalyzeDirectory} disabled={isLoading}>
-            {isLoading ? 'Analyzing...' : 'Select Directory'}
-          </button>
-        {selectedPath && <p>Path: {selectedPath}</p>}
+    <div className={`app-container ${viewMode === 'chatting' ? 'chat-mode' : 'context-mode'}`}>
 
-        {/* LLM Configuration Manager Removed from here */}
+      {/* --- Left Pane (Project View) --- */}
+      <aside className="left-pane">
+        <button onClick={() => setSelectedPath(null)} style={{ marginTop: '0.5rem', marginBottom: '1rem' }}>
+             Home
+        </button>
+        {selectedPath && (
+          <p style={{ 
+            wordBreak: 'break-word', 
+            overflowWrap: 'break-word',
+            maxWidth: '100%'
+          }}>
+            Project: {selectedPath}
+          </p>
+        )}
+        <h3>Project Files</h3>
+
+        {isLoading && <p>Loading project...</p>}
+        {error && !isLoading && <p className="error-display">Error loading project: {error}</p>}
 
         {/* File Tree Display */}
-        <FileTree
+        {!isLoading && directoryTree && (
+          <FileTree
             treeData={directoryTree}
             selectedFiles={selectedFilePaths}
             onFileSelectionChange={handleFileSelectionChange}
-        />
+          />
+        )}
       </aside>
 
-      {/* --- Center Pane --- */}
-      <section className="center-pane">
-        <div className="context-pane">
-          {/* TODO: Render the directoryTree structure here instead */}
-          <h4>Compiled Context</h4>
-          {isCompiling && <p>Compiling context...</p>}
-          <pre className="context-display-area">
-            <code>{compiledContext || 'Select files from the tree to compile context.'}</code>
-          </pre>
-          {compiledContext && !isCompiling && (
-             <button onClick={() => navigator.clipboard.writeText(compiledContext)} className="copy-button">
-               Copy Context
-             </button>
-           )}
-        </div>
-        <div className="query-pane">
-          <h4>Your Query</h4>
-          <textarea
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Enter your query here..."
-            rows={5}
-            disabled={isSending || !compiledContext} // Disable if no compiled context
-          />
-        </div>
-      </section>
+      {/* --- Conditional Rendering for Center/Right Panes (Context/Chat) --- */}
+      {viewMode === 'contextSelection' ? (
+        <>
+          {/* --- Center Pane (Context Selection Mode) --- */}
+          <section className="center-pane">
+            <div className="context-pane">
+              <h4>Compile Context</h4>
+              {isCompiling && <p>Compiling context...</p>}
+              <pre className="context-display-area">
+                <code>{compiledContext || 'Select files from the tree to compile context.'}</code>
+              </pre>
+              {compiledContext && !isCompiling && (
+                <button onClick={() => navigator.clipboard.writeText(compiledContext)} className="copy-button">
+                  Copy Context
+                </button>
+              )}
+            </div>
+            <div className="query-pane">
+              <h4>Your Query</h4>
+              <textarea
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Enter your query here to start the chat..."
+                rows={5}
+                disabled={isSending || isCompiling || !compiledContext}
+              />
+            </div>
+          </section>
 
-      {/* --- Right Pane --- */}
-      <aside className="right-pane">
-        <h3>LLM Interaction</h3>
-         <button onClick={() => setIsSettingsModalOpen(true)} style={{ marginBottom: '1rem', float: 'right', padding: '0.2rem 0.5rem' }}>
-            Manage Configs
+          {/* --- Right Pane (Context Selection Mode) --- */}
+          <aside className="right-pane">
+          <button onClick={toggleTheme} style={{ marginBottom: '1rem' }}>
+          Toggle Theme ({theme === 'light' ? 'Dark' : 'Light'})
         </button>
-        {/* Configuration Selection */}
-        <div>
-            <label htmlFor="config-select">Configuration: </label>
-            <select
+            <h3>LLM Interaction</h3>
+            <button onClick={() => setIsSettingsModalOpen(true)} style={{ marginBottom: '1rem', float: 'right', padding: '0.2rem 0.5rem' }}>
+              Manage Configs
+            </button>
+            {/* Configuration Selection */}
+            <div>
+              <label htmlFor="config-select">Configuration: </label>
+              <select
                 id="config-select"
                 value={selectedConfigId ?? ''}
                 onChange={(e) => {
-                    const newConfigId = e.target.value;
-                    setSelectedConfigId(newConfigId);
-                    // Reset model selection when config changes
-                    const newConfig = llmConfigs.find(c => c.id === newConfigId);
-                    if (newConfig) {
-                        setSelectedModel(newConfig.defaultModel ?? (newConfig.models.length > 0 ? newConfig.models[0] : null));
-                    } else {
-                        setSelectedModel(null);
-                    }
+                  const newConfigId = e.target.value;
+                  setSelectedConfigId(newConfigId);
+                  const newConfig = llmConfigs.find(c => c.id === newConfigId);
+                  if (newConfig) {
+                    setSelectedModel(newConfig.defaultModel ?? (newConfig.models.length > 0 ? newConfig.models[0] : null));
+                  } else {
+                    setSelectedModel(null);
+                  }
                 }}
                 disabled={llmConfigs.length === 0}
-            >
+              >
                 <option value="" disabled>-- Select Configuration --</option>
                 {llmConfigs.map(config => (
-                    <option key={config.id} value={config.id}>{config.name}</option>
+                  <option key={config.id} value={config.id}>{config.name}</option>
                 ))}
-            </select>
-        </div>
-        {/* Model Selection (dependent on selected config) */}
-        <div style={{ marginTop: '0.5rem' }}>
-             <label htmlFor="model-select">Model: </label>
-             <select
+              </select>
+            </div>
+            {/* Model Selection */}
+            <div style={{ marginTop: '0.5rem' }}>
+              <label htmlFor="model-select">Model: </label>
+              <select
                 id="model-select"
                 value={selectedModel ?? ''}
                 onChange={(e) => setSelectedModel(e.target.value)}
                 disabled={!selectedConfigId}
-             >
+              >
                 <option value="" disabled>-- Select Model --</option>
                 {llmConfigs.find(c => c.id === selectedConfigId)?.models.map(modelName => (
-                     <option key={modelName} value={modelName}>{modelName}</option>
+                  <option key={modelName} value={modelName}>{modelName}</option>
                 ))}
-             </select>
-        </div>
-        <button
-            onClick={handleSendPrompt}
-            disabled={isSending || isLoading || isCompiling || !compiledContext || !query} // Disable if loading/compiling or no context/query
-            style={{ marginTop: '10px', width: '100%' }}
+              </select>
+            </div>
+            {/* Action Button: Start Chat */}
+            <button
+              onClick={handleSendPrompt}
+              disabled={isSending || isLoading || isCompiling || !compiledContext || !query || !selectedConfigId || !selectedModel}
+              style={{ marginTop: '10px', width: '100%' }}
             >
-            {isSending ? 'Sending...' : 'Send to LLM'}
-        </button>
-        <div className="response-pane">
-           {/* Display Thinking Steps */}
-           {thinkingSteps && (
-                <div className="thinking-steps-area" style={{ marginBottom: '1rem', borderBottom: '1px dashed var(--border-color)', paddingBottom: '1rem', opacity: 0.7 }}>
-                    <h4>Thinking...</h4>
-                    {/* Use pre-wrap for basic formatting of thinking steps */}
-                    <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', fontSize: '0.8rem' }}>
-                        <code>{thinkingSteps}</code>
-                    </pre>
-                </div>
-           )}
-          <h4>Response</h4>
-          {isSending && !thinkingSteps && <p>Waiting for response...</p>} {/* Show only if not already thinking/streaming */}
-          {error && <p className="error-display">Error: {error}</p>}
-          <div className="response-display-area"> {/* Use a div for scroll container */}
-            <ReactMarkdown
-              children={llmResponse}
-              components={{
-                // Correctly type the code component props
-                code({ node, className, children, ...props }: { node?: any; inline?: boolean; className?: string; children?: React.ReactNode }) {
-                  const match = /language-(\w+)/.exec(className || '');
-                  // Check if it's a block code (not inline) and has a language match
-                  return match ? (
-                    <SyntaxHighlighter
-                      // Pass only necessary props
-                      style={vscDarkPlus} // Choose your theme
-                      language={match[1]}
-                      PreTag="div"
-                      // {...props} // Avoid spreading unknown props
-                    >
-                      {String(children).replace(/\n$/, '')}
-                    </SyntaxHighlighter>
-                  ) : (
-                    // Render inline code or code blocks without a language tag normally
-                    <code className={className} {...props}>
-                      {children}
-                    </code>
-                  );
-                }
-              }}
-            />
-          </div>
-           {llmResponse && !isSending && (
-             <button onClick={() => navigator.clipboard.writeText(llmResponse)} className="copy-button">
-               Copy Response
-             </button>
-           )}
-        </div>
-      </aside>
+              {isSending ? 'Starting...' : 'Start Chat'}
+            </button>
+            {/* Response area is minimal/empty in this mode */}
+            <div className="response-pane" style={{ marginTop: '1rem' }}>
+               {error && <p className="error-display">Error: {error}</p>}
+            </div>
+          </aside>
+        </>
+      ) : (
+        // --- Chatting Mode ---
+        <ChatView
+          query={query}
+          setQuery={setQuery}
+          llmResponse={llmResponse}
+          thinkingSteps={thinkingSteps}
+          isSending={isSending}
+          error={error}
+          handleSendPrompt={handleSendPrompt}
+          llmConfigs={llmConfigs}
+          selectedConfigId={selectedConfigId}
+          setSelectedConfigId={setSelectedConfigId}
+          selectedModel={selectedModel}
+          setSelectedModel={setSelectedModel}
+          // Pass chat history related props later if needed
+        />
+      )}
 
-       {/* Settings Modal */}
+      {/* Settings Modal (Common to both modes) */}
       {isSettingsModalOpen && (
         <div className="modal-backdrop" onClick={() => setIsSettingsModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}> {/* Prevent closing when clicking inside modal */}
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close-button" onClick={() => setIsSettingsModalOpen(false)}>X</button>
             <h2>LLM Configuration Management</h2>
-            {/* Pass setLlmConfigs to allow manager to refresh list after add/delete? Or rely on useEffect fetch? */}
-            {/* For now, rely on useEffect fetch after modal closes or add manual refresh */}
             <LLMConfigManager />
           </div>
         </div>
