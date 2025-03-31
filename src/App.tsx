@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react'; // Added useCallback
 import ReactMarkdown, { Components } from 'react-markdown'; // Use Components type
 // Removed incorrect CodeProps import
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -13,10 +13,26 @@ import { LLMConfig } from './types/llmConfig'; // Import LLMConfig type
 import ChatView from './components/ChatView'; // Import the new ChatView component
 import ProjectSelectionView from './components/ProjectSelectionView'; // Import the ProjectSelectionView component
 
+// Helper function to count files recursively
+const countTotalFiles = (nodes: DirectoryItem[] | null): number => {
+  if (!nodes) return 0;
+  let count = 0;
+  for (const node of nodes) {
+    if (node.type === 'file') {
+      count++;
+    } else if (node.type === 'directory' && node.children) {
+      count += countTotalFiles(node.children);
+    }
+  }
+  return count;
+};
+
+
 function App() {
   const { theme, toggleTheme } = useTheme(); // Use the theme context
   const [selectedPath, setSelectedPath] = useState<string | null>(null); // Path of the currently active project
   const [directoryTree, setDirectoryTree] = useState<DirectoryItem[] | null>(null); // State for the file tree structure
+  const [totalFileCount, setTotalFileCount] = useState<number>(0); // <<< New state for total file count
   const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]); // State for selected file paths
   const [compiledContext, setCompiledContext] = useState<string>(''); // State for the final context string
   const [isLoading, setIsLoading] = useState<boolean>(false); // Loading state for directory analysis
@@ -32,6 +48,8 @@ function App() {
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false); // Re-add state for modal visibility
 
+  const [fullPromptForCopy, setFullPromptForCopy] = useState<string>(''); // <<< State for the full prompt to be copied
+  const [copyPreviewText, setCopyPreviewText] = useState<string>(''); // <<< State for the copy preview
   // --- New states for refactoring ---
   const [viewMode, setViewMode] = useState<'contextSelection' | 'chatting'>('contextSelection');
   const [pendingAddedFilePaths, setPendingAddedFilePaths] = useState<string[]>([]);
@@ -167,6 +185,18 @@ function App() {
     compileContext();
   }, [selectedFilePaths]); // Re-run whenever selectedFilePaths changes
 
+  // Effect to update the copy preview text
+  useEffect(() => {
+    if (!compiledContext) {
+      setCopyPreviewText('');
+      return;
+    }
+    const preview = query
+      ? `User Query:\n${query}\n\n---\n\nContext:\n${compiledContext}`
+      : compiledContext;
+    setCopyPreviewText(preview);
+  }, [compiledContext, query]); // Re-run when context or query changes
+
   // Effect to process files added dynamically during chat
   useEffect(() => {
     const processPendingFiles = async () => {
@@ -212,8 +242,16 @@ function App() {
     processPendingFiles();
   }, [pendingAddedFilePaths]); // Run whenever pendingAddedFilePaths changes
 
+  // Effect to calculate total file count
+  useEffect(() => {
+    console.log("Directory tree changed, recalculating total file count...");
+    const count = countTotalFiles(directoryTree);
+    setTotalFileCount(count);
+    console.log("Total file count:", count);
+  }, [directoryTree]); // Re-run whenever directoryTree changes
+
   // Function to analyze a directory once its path is known
-  const analyzeDirectory = async (path: string) => {
+  const analyzeDirectory = useCallback(async (path: string) => {
     setIsLoading(true);
     setError(null);
     setDirectoryTree(null);
@@ -225,6 +263,7 @@ function App() {
     setAddedContext('');
     setChatHistoryContext('');
     setPendingAddedFilePaths([]);
+    setTotalFileCount(0); // Reset count during analysis
 
     try {
       setSelectedPath(path); // Set the active project path
@@ -235,7 +274,7 @@ function App() {
         setError(contextResult);
         setDirectoryTree(null);
       } else {
-        setDirectoryTree(contextResult);
+        setDirectoryTree(contextResult); // This will trigger the useEffect for counting
         setCompiledContext(''); // Reset compiled context until files are selected
       }
     } catch (err) {
@@ -245,35 +284,34 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   // Function to handle opening a new directory via dialog
-  const handleOpenNewProject = async () => {
-    setIsLoading(true); // Set loading while dialog is open and potentially analyzing
+  const handleOpenNewProject = useCallback(async () => {
+    setIsLoading(true);
     setError(null);
     try {
       console.log('Requesting directory selection...');
-      const path = await window.electronAPI.openDirectoryDialog(); // This now also adds to DB
+      const path = await window.electronAPI.openDirectoryDialog();
       console.log('Directory selected:', path);
       if (path) {
-        await analyzeDirectory(path); // Analyze the newly selected path
+        await analyzeDirectory(path);
       } else {
         console.log('Directory selection cancelled.');
-        setIsLoading(false); // Reset loading if cancelled
+        setIsLoading(false);
       }
     } catch (err) {
       console.error("Error opening new project directory:", err);
       setError(err instanceof Error ? `Error opening directory: ${err.message}` : String(err));
-      setIsLoading(false); // Reset loading on error
+      setIsLoading(false);
     }
-    // Note: setIsLoading(false) is handled within analyzeDirectory on success/error
-  };
+  }, [analyzeDirectory]);
 
   // Function to handle selecting a recent project
-  const handleRecentProjectSelect = (path: string) => {
+  const handleRecentProjectSelect = useCallback((path: string) => {
     console.log(`Selected recent project: ${path}`);
-    analyzeDirectory(path); // Analyze the selected recent path
-  };
+    analyzeDirectory(path);
+  }, [analyzeDirectory]);
 
   const handleSendPrompt = async () => {
     if (!query) {
@@ -297,9 +335,8 @@ function App() {
       nextChatHistoryContext = compiledContext; // Initialize chat history
       console.log("Sending initial prompt (contextSelection mode)...");
     } else { // chatting mode
-      // Combine previous history with any newly added context
       contextToSend = chatHistoryContext + (addedContext ? '\n\n' + addedContext : '');
-      nextChatHistoryContext = contextToSend; // Update history with what's being sent
+      nextChatHistoryContext = contextToSend;
       console.log("Sending follow-up prompt (chatting mode)...");
     }
 
@@ -308,9 +345,12 @@ function App() {
     setLlmResponse('');
     setThinkingSteps('');
 
+    // <<< Construct the full prompt string for copying BEFORE sending
+    const promptToCopy = `${contextToSend}\n\n---\n\nUser Query:\n${query}`;
+    setFullPromptForCopy(promptToCopy);
+
     console.log(`Requesting stream using config ${selectedConfigId} and model ${selectedModel}...`);
     try {
-      // Initiate the stream request
       window.electronAPI.sendPromptStreamRequest({
         context: contextToSend,
         query: query,
@@ -318,56 +358,80 @@ function App() {
         model: selectedModel,
       });
 
-      // --- State updates after successfully initiating the request ---
-      setChatHistoryContext(nextChatHistoryContext); // Update history
-      setAddedContext(''); // Clear added context as it's now part of history
-      setQuery(''); // Clear the query input
+      setChatHistoryContext(nextChatHistoryContext);
+      setAddedContext('');
+      setQuery('');
 
-      // Switch to chat mode after the first successful send
       if (viewMode === 'contextSelection') {
         setViewMode('chatting');
         console.log("Switched to chatting mode.");
       }
-      // Note: isSending will be reset by stream end/error listeners
 
     } catch (err) {
-      // This catch block might not be effective for errors *during* the stream,
-      // as sendPromptStreamRequest is likely fire-and-forget.
-      // Errors during the stream are handled by the onLLMStreamError listener.
       console.error("Error initiating prompt stream request:", err);
       setError(err instanceof Error ? `Error sending prompt: ${err.message}` : 'Unknown error sending prompt');
-      setIsSending(false); // Ensure sending state is reset on initiation error
+      setIsSending(false);
     }
   };
 
-  // Handler for file selection changes from FileTree
-  const handleFileSelectionChange = (filePath: string, isSelected: boolean) => {
+  // Handler for individual file selection changes
+  const handleFileSelectionChange = useCallback((filePath: string, isSelected: boolean) => {
     if (viewMode === 'contextSelection') {
-      // Update initial selection list, triggering compiledContext useEffect
       setSelectedFilePaths(prevSelected => {
+        const currentSet = new Set(prevSelected);
         if (isSelected) {
-          return prevSelected.includes(filePath) ? prevSelected : [...prevSelected, filePath];
+          currentSet.add(filePath);
         } else {
-          return prevSelected.filter(path => path !== filePath);
+          currentSet.delete(filePath);
         }
+        return Array.from(currentSet);
       });
       console.log('Context Selection: Updated selectedFilePaths');
     } else if (viewMode === 'chatting') {
-      // Handle dynamic additions during chat
       if (isSelected) {
-        // Add to pending list for processing by useEffect
         setPendingAddedFilePaths(prevPending =>
           prevPending.includes(filePath) ? prevPending : [...prevPending, filePath]
         );
         console.log('Chatting: Added to pendingAddedFilePaths:', filePath);
       } else {
-        // Currently ignoring deselection during chat for simplicity
-        // Optional: Remove from pendingAddedFilePaths if it hasn't been processed yet
-        // setPendingAddedFilePaths(prevPending => prevPending.filter(path => path !== filePath));
         console.log('Chatting: Deselection ignored for:', filePath);
       }
     }
-  };
+  }, [viewMode]);
+
+  // <<< Handler for selecting all files in a folder >>>
+  const handleFolderSelect = useCallback((folderPath: string, filePaths: string[]) => {
+      console.log(`App: Selecting files for folder ${folderPath}`);
+      // Add files to selection, ensuring no duplicates
+      setSelectedFilePaths(prevSelected => {
+          const combined = new Set([...prevSelected, ...filePaths]);
+          return Array.from(combined);
+      });
+      // If in chat mode, maybe add to pending instead? For now, assume context mode.
+      if (viewMode === 'chatting') {
+          console.warn("Folder selection initiated in chat mode - adding directly to selection for now.");
+          // Potentially add to pendingAddedFilePaths instead or handle differently
+      }
+  }, [viewMode]); // Dependency on viewMode might be needed if behavior changes
+
+  // <<< Handler for deselecting all files in a folder >>>
+  const handleFolderDeselect = useCallback((folderPath: string, filePaths: string[]) => {
+      console.log(`App: Deselecting files for folder ${folderPath}`);
+      // Remove files from selection
+      setSelectedFilePaths(prevSelected => {
+          const currentSet = new Set(prevSelected);
+          filePaths.forEach(path => currentSet.delete(path));
+          return Array.from(currentSet);
+      });
+       // If in chat mode, maybe ignore? For now, assume context mode.
+       if (viewMode === 'chatting') {
+          console.warn("Folder deselection initiated in chat mode - removing directly from selection for now.");
+      }
+  }, [viewMode]); // Dependency on viewMode might be needed if behavior changes
+
+
+  // Unused handlers removed
+
 
   // Render Project Selection View if no path is selected
   if (!selectedPath) {
@@ -390,15 +454,14 @@ function App() {
              Home
         </button>
         {selectedPath && (
-          <p style={{ 
-            wordBreak: 'break-word', 
+          <p style={{
+            wordBreak: 'break-word',
             overflowWrap: 'break-word',
             maxWidth: '100%'
           }}>
             Project: {selectedPath}
           </p>
         )}
-        <h3>Project Files</h3>
 
         {isLoading && <p>Loading project...</p>}
         {error && !isLoading && <p className="error-display">Error loading project: {error}</p>}
@@ -408,7 +471,10 @@ function App() {
           <FileTree
             treeData={directoryTree}
             selectedFiles={selectedFilePaths}
+            totalFileCount={totalFileCount}
             onFileSelectionChange={handleFileSelectionChange}
+            onFolderSelect={handleFolderSelect} // <<< Pass handler
+            onFolderDeselect={handleFolderDeselect} // <<< Pass handler
           />
         )}
       </aside>
@@ -425,10 +491,26 @@ function App() {
                 <code>{compiledContext || 'Select files from the tree to compile context.'}</code>
               </pre>
               {compiledContext && !isCompiling && (
-                <button onClick={() => navigator.clipboard.writeText(compiledContext)} className="copy-button">
-                  Copy Context
+                <button
+                  onClick={() => {
+                    const textToCopy = query
+                      ? `User Query:\n${query}\n\n---\n\nContext:\n${compiledContext}` // Query first
+                      : compiledContext; // Context only if query is empty
+                    navigator.clipboard.writeText(textToCopy);
+                  }}
+                  className="copy-button"
+                  // Button is enabled as long as context exists
+                >
+                  {query ? 'Copy Query + Context' : 'Copy Context'} {/* Dynamic button text */}
                 </button>
               )}
+              {/* Preview Area */}
+              {/* {copyPreviewText && (
+                <div className="copy-preview-area" style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
+                  <h4>Copy Preview:</h4>
+                  <pre className="context-display-area"><code>{copyPreviewText}</code></pre>
+                </div>
+              )} */}
             </div>
             <div className="query-pane">
               <h4>Your Query</h4>
@@ -519,6 +601,7 @@ function App() {
           setSelectedConfigId={setSelectedConfigId}
           selectedModel={selectedModel}
           setSelectedModel={setSelectedModel}
+          fullPromptForCopy={fullPromptForCopy} // <<< Pass the state down
           // Pass chat history related props later if needed
         />
       )}

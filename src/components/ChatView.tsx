@@ -19,6 +19,7 @@ interface ChatViewProps {
   selectedModel: string | null;
   setSelectedModel: (model: string | null) => void;
   // Add chat history display later
+  fullPromptForCopy: string; // <<< Add prop for the full prompt string
 }
 
 const ChatView: React.FC<ChatViewProps> = ({
@@ -34,6 +35,7 @@ const ChatView: React.FC<ChatViewProps> = ({
   setSelectedConfigId,
   selectedModel,
   setSelectedModel,
+  fullPromptForCopy, // <<< Destructure the new prop
 }) => {
 
   // TODO: Implement chat history display (e.g., array of messages)
@@ -142,12 +144,24 @@ const ChatView: React.FC<ChatViewProps> = ({
           rows={3}
           disabled={isSending || !selectedConfigId || !selectedModel}
         />
-        <button
-          onClick={handleSendPrompt}
-          disabled={isSending || !query || !selectedConfigId || !selectedModel}
-        >
-          {isSending ? 'Sending...' : 'Send'}
-        </button>
+        {/* Wrapper for buttons */}
+        <div style={{ display: 'flex', alignItems: 'center', marginTop: '0.5rem' }}>
+            <button
+              onClick={handleSendPrompt}
+              disabled={isSending || !query || !selectedConfigId || !selectedModel}
+            >
+              {isSending ? 'Sending...' : 'Send'}
+            </button>
+            {/* TODO: Enhance this to copy the full prompt including context */}
+            <button
+              onClick={() => navigator.clipboard.writeText(fullPromptForCopy)} // <<< Use the full prompt prop
+              disabled={isSending || !fullPromptForCopy} // <<< Disable if no prompt string or sending
+              className="copy-button" // Reuse existing style or create a new one
+              style={{ marginLeft: '0.5rem' }} // Keep spacing
+            >
+              Copy Full Prompt {/* <<< Change button text */}
+            </button>
+        </div>
       </div>
     </section>
   );

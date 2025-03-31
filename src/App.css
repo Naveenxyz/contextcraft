@@ -477,3 +477,76 @@ html.dark .project-card {
 .project-selection-view .recent-projects-list {
   display: none; /* Hide the old elements */
 }
+
+/* --- File Tree Enhancements --- */
+.file-tree-container {
+  /* Ensure container uses flex properties set in FileTree.tsx */
+  /* Styles like border-top, padding-top, overflow are set inline */
+}
+
+.file-tree-container input[type="text"] {
+  /* Use existing input styles but override margin */
+  width: 100%;
+  padding: 0.4rem 0.6rem; /* Slightly adjusted padding */
+  margin-bottom: 0.5rem;
+  box-sizing: border-box;
+  border: 1px solid var(--input-border-color);
+  background-color: var(--input-bg-color);
+  color: var(--input-text-color);
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.file-tree-container small {
+  color: var(--secondary-text-color);
+  font-size: 0.85rem;
+  display: block; /* Ensure it takes its own line */
+}
+
+.file-tree-container ul {
+  list-style-type: none;
+  padding-left: 15px;
+  margin-top: 0.5rem;
+}
+
+.file-tree-container li {
+  margin-bottom: 0.2rem;
+}
+
+.file-tree-container li strong { /* Style for directory names */
+  color: var(--secondary-text-color); /* Make directories slightly less prominent */
+  font-weight: 500; /* Less bold than default */
+}
+
+.file-tree-container label {
+  cursor: pointer;
+  flex-grow: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 4px; /* Space between icon and text */
+}
+
+.file-tree-container input[type="checkbox"] {
+  margin-right: 8px;
+  cursor: pointer;
+  flex-shrink: 0; /* Prevent checkbox from shrinking */
+}
+
+/* Container for Add buttons */
+.file-tree-container > div:last-child {
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0; /* Prevent button container from shrinking */
+}
+
+/* Add File/Folder buttons */
+.file-tree-container > div:last-child button {
+  flex-grow: 1;
+  padding: 0.5rem; /* Consistent padding */
+  margin-top: 0; /* Override default button margin */
+  font-size: 0.9rem;
+}
