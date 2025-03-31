@@ -185,7 +185,7 @@ const FileTree: React.FC<FileTreeProps> = ({
   }
 
   return (
-    <div className="file-tree-container" style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', flexGrow: 1, overflow: 'hidden' }}>
+    <div className="file-tree-container" style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', flexGrow: 1 /* Removed overflow: hidden */ }}>
       {/* Filter and Count */}
       <div style={{ paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', marginBottom: '0.5rem', flexShrink: 0 }}>
         <input

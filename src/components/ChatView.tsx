@@ -1,104 +1,186 @@
-import React from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react'; // Add memo
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { LLMConfig } from '../types/llmConfig'; // Assuming LLMConfig type path
+import { LLMConfig } from '../types/llmConfig';
+import { ChatMessage } from '../types/chat'; // <<< Import from new type definition file
 
 interface ChatViewProps {
-  // Props needed for chat functionality will be added here:
+  // Keep existing relevant props
   query: string;
   setQuery: (query: string) => void;
-  llmResponse: string;
+  // llmResponse: string; // Will be managed via chatHistory now
   thinkingSteps: string;
-  isSending: boolean;
+  isSending: boolean; // Represents user sending action (preparing request)
   error: string | null;
-  handleSendPrompt: () => void;
+  // handleSendPrompt: () => void; // Will be modified/replaced by onSendMessage
   llmConfigs: LLMConfig[];
   selectedConfigId: string | null;
   setSelectedConfigId: (id: string | null) => void;
   selectedModel: string | null;
   setSelectedModel: (model: string | null) => void;
-  // Add chat history display later
-  fullPromptForCopy: string; // <<< Add prop for the full prompt string
+  // fullPromptForCopy: string; // Context will be part of history
+
+  // New props needed
+  initialContext: string | null; // The initial system context (can be null initially)
+  onSendMessage: (messages: ChatMessage[]) => void; // Function to send history to parent
+  currentAssistantMessage: string | null; // Streamed response part
+  isReceiving: boolean; // Flag specifically for when the assistant is responding
+  chatHistory: ChatMessage[]; // Pass down the canonical history
+  onGoBack: () => void; // Function to trigger going back
 }
 
 const ChatView: React.FC<ChatViewProps> = ({
   query,
   setQuery,
-  llmResponse,
   thinkingSteps,
-  isSending,
+  isSending, // Flag for preparing/sending user message
   error,
-  handleSendPrompt,
   llmConfigs,
   selectedConfigId,
   setSelectedConfigId,
   selectedModel,
   setSelectedModel,
-  fullPromptForCopy, // <<< Destructure the new prop
+  initialContext,
+  onSendMessage,
+  currentAssistantMessage, // The streaming response content
+  isReceiving, // Flag for when assistant is streaming
+  chatHistory, // Receive history from parent
+  onGoBack, // Receive go back handler
 }) => {
 
-  // TODO: Implement chat history display (e.g., array of messages)
+  // const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // History managed by parent now
+  const chatEndRef = useRef<HTMLDivElement>(null); // For scrolling
 
-  // Simplified LLM Config change handler (adjust as needed)
-  const handleConfigChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newConfigId = e.target.value;
-    setSelectedConfigId(newConfigId);
-    const newConfig = llmConfigs.find(c => c.id === newConfigId);
-    if (newConfig) {
-      setSelectedModel(newConfig.defaultModel ?? (newConfig.models.length > 0 ? newConfig.models[0] : null));
-    } else {
-      setSelectedModel(null);
+  // Effect to scroll to bottom when history or streaming message updates
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, currentAssistantMessage]);
+
+  const handleLocalSend = () => {
+    if (!query.trim() || isSending || isReceiving) return;
+
+    const newUserMessage: ChatMessage = {
+      id: `user-${Date.now()}`, // Simple unique ID
+      role: 'user',
+      content: query,
+    };
+
+    // Construct the history to send to the parent
+    // Include initial context if it exists and isn't already the first message
+    let historyToSend = [...chatHistory];
+    if (initialContext && (historyToSend.length === 0 || historyToSend[0].role !== 'system')) {
+        historyToSend.unshift({ id: 'system-init', role: 'system', content: initialContext });
     }
+    historyToSend.push(newUserMessage);
+
+
+    // Call the parent function to handle the actual LLM interaction
+    // The parent will update the canonical chatHistory state
+    onSendMessage(historyToSend);
+    setQuery(''); // Clear input after initiating send
   };
+
+  // LLM Config change handler (remains mostly the same)
+  const handleConfigChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+     const newConfigId = e.target.value;
+     setSelectedConfigId(newConfigId);
+     const newConfig = llmConfigs.find(c => c.id === newConfigId);
+     if (newConfig) {
+       setSelectedModel(newConfig.defaultModel ?? (newConfig.models.length > 0 ? newConfig.models[0] : null));
+     } else {
+       setSelectedModel(null);
+     }
+  };
+
+  // Helper to render markdown with syntax highlighting
+  const renderMarkdown = (content: string) => (
+    <ReactMarkdown
+      children={content}
+      components={{
+        code({ node, className, children, ...props }: any) { // Use any for simplicity here, refine if needed
+          const match = /language-(\w+)/.exec(className || '');
+          // Ensure children is a string before replacing
+          const codeString = String(children).replace(/\n$/, '');
+          return match ? (
+            <SyntaxHighlighter
+              style={vscDarkPlus} // Make sure vscDarkPlus is imported
+              language={match[1]}
+              PreTag="div"
+              className="code-block" // Add a class for potential styling
+            >
+              {codeString}
+            </SyntaxHighlighter>
+          ) : (
+            <code className={`inline-code ${className || ''}`} {...props}>
+              {children}
+            </code>
+          );
+        }
+      }}
+    />
+  );
 
   return (
     <section className="chat-view">
-      {/* TODO: Add Chat History Display Area */}
+      {/* Add a header with a back button */}
+      <div className="chat-view-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1rem' }}>
+        <button onClick={onGoBack} style={{ padding: '0.3rem 0.8rem', marginTop: 0 }}>
+          &lt; Back
+        </button>
+        {/* Optional: Add a title or other controls here */}
+        <h4>Chat</h4>
+        <div>{/* Placeholder for right-aligned items if needed */}</div>
+      </div>
       <div className="chat-history-area">
-        {/* Placeholder for chat messages */}
-        <p>Chat history will appear here...</p>
-         {/* Display Thinking Steps */}
-         {thinkingSteps && (
-            <div className="thinking-steps-area" style={{ marginBottom: '1rem', borderBottom: '1px dashed var(--border-color)', paddingBottom: '1rem', opacity: 0.7 }}>
-                <h4>Thinking...</h4>
-                <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', fontSize: '0.8rem' }}>
-                    <code>{thinkingSteps}</code>
-                </pre>
+        {/* Render Chat History */}
+        {chatHistory.map((message) => (
+          // Only render user and assistant messages in the main flow
+          message.role !== 'system' && (
+            <div key={message.id} className={`chat-message ${message.role}`}>
+                <div className="message-header">
+                    <strong>{message.role === 'user' ? 'You' : 'Assistant'}</strong>
+                    {message.role === 'assistant' && (
+                         <button
+                            onClick={() => navigator.clipboard.writeText(message.content)}
+                            className="copy-button message-copy-button"
+                            title="Copy message"
+                         >
+                           Copy
+                         </button>
+                    )}
+                </div>
+                <div className="message-content">
+                    {renderMarkdown(message.content)}
+                </div>
             </div>
-         )}
-         {/* Display Current Response Stream */}
-         {llmResponse && (
-             <div className="response-display-area">
-                <ReactMarkdown
-                  children={llmResponse}
-                  components={{
-                    code({ node, className, children, ...props }: { node?: any; inline?: boolean; className?: string; children?: React.ReactNode }) {
-                      const match = /language-(\w+)/.exec(className || '');
-                      return match ? (
-                        <SyntaxHighlighter
-                          style={vscDarkPlus}
-                          language={match[1]}
-                          PreTag="div"
-                        >
-                          {String(children).replace(/\n$/, '')}
-                        </SyntaxHighlighter>
-                      ) : (
-                        <code className={className} {...props}>
-                          {children}
-                        </code>
-                      );
-                    }
-                  }}
-                />
+          )
+        ))}
+
+        {/* Display Thinking Steps (Collapsible) */}
+        {isSending && thinkingSteps && ( // Show thinking toggle only when initially sending user message and steps exist
+            <details className="thinking-steps-area chat-message system">
+                <summary>Thinking...</summary> {/* Clickable summary */}
+                <pre><code>{thinkingSteps}</code></pre> {/* Content shown when expanded */}
+            </details>
+        )}
+
+        {/* Display Current Assistant Response Stream */}
+        {isReceiving && currentAssistantMessage && (
+             <div className="chat-message assistant streaming">
+                 <div className="message-header">
+                    <strong>Assistant</strong>
+                 </div>
+                 <div className="message-content">
+                    {renderMarkdown(currentAssistantMessage)}
+                 </div>
              </div>
-         )}
-         {llmResponse && !isSending && (
-             <button onClick={() => navigator.clipboard.writeText(llmResponse)} className="copy-button">
-               Copy Response
-             </button>
-         )}
-         {isSending && !thinkingSteps && <p>Waiting for response...</p>}
+        )}
+         {isSending && !thinkingSteps && !isReceiving && <p className="chat-message system">Sending request...</p>}
+
+
+        {/* Scroll anchor */}
+        <div ref={chatEndRef} />
       </div>
 
       {/* Error Display */}
@@ -114,7 +196,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                     id="chat-config-select"
                     value={selectedConfigId ?? ''}
                     onChange={handleConfigChange}
-                    disabled={llmConfigs.length === 0 || isSending}
+                    disabled={llmConfigs.length === 0 || isSending || isReceiving} // Disable during sending/receiving
                 >
                     <option value="" disabled>-- Select --</option>
                     {llmConfigs.map(config => (
@@ -128,7 +210,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                     id="chat-model-select"
                     value={selectedModel ?? ''}
                     onChange={(e) => setSelectedModel(e.target.value)}
-                    disabled={!selectedConfigId || isSending}
+                    disabled={!selectedConfigId || isSending || isReceiving} // Disable during sending/receiving
                  >
                     <option value="" disabled>-- Select --</option>
                     {llmConfigs.find(c => c.id === selectedConfigId)?.models.map(modelName => (
@@ -142,29 +224,27 @@ const ChatView: React.FC<ChatViewProps> = ({
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Enter your message..."
           rows={3}
-          disabled={isSending || !selectedConfigId || !selectedModel}
+          disabled={isSending || isReceiving || !selectedConfigId || !selectedModel} // Disable during sending/receiving
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault(); // Prevent newline
+              handleLocalSend();
+            }
+          }}
         />
         {/* Wrapper for buttons */}
         <div style={{ display: 'flex', alignItems: 'center', marginTop: '0.5rem' }}>
             <button
-              onClick={handleSendPrompt}
-              disabled={isSending || !query || !selectedConfigId || !selectedModel}
+              onClick={handleLocalSend}
+              disabled={isSending || isReceiving || !query || !selectedConfigId || !selectedModel} // Disable during sending/receiving
             >
-              {isSending ? 'Sending...' : 'Send'}
+              {isSending ? 'Preparing...' : (isReceiving ? 'Responding...' : 'Send')}
             </button>
-            {/* TODO: Enhance this to copy the full prompt including context */}
-            <button
-              onClick={() => navigator.clipboard.writeText(fullPromptForCopy)} // <<< Use the full prompt prop
-              disabled={isSending || !fullPromptForCopy} // <<< Disable if no prompt string or sending
-              className="copy-button" // Reuse existing style or create a new one
-              style={{ marginLeft: '0.5rem' }} // Keep spacing
-            >
-              Copy Full Prompt {/* <<< Change button text */}
-            </button>
+            {/* Removed the 'Copy Full Prompt' button */}
         </div>
       </div>
     </section>
   );
 };
 
-export default ChatView;
+export default memo(ChatView); // Wrap export with React.memo

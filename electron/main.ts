@@ -6,6 +6,8 @@ import fs from 'fs/promises';
 import Store from 'electron-store'; // Revert back to default import
 import { randomUUID } from 'node:crypto'; // For generating unique IDs
 import { initDatabase, addProject, getAllProjects, closeDatabase } from './database'; // Import database functions
+// Import ChatMessage type from the shared type definition file
+import type { ChatMessage } from '../src/types/chat'; // <<< Add correct import
 
 // Define the service name for keytar (used for API keys)
 const KEYTAR_SERVICE_NAME = 'ContextCraftLLMKeys';
@@ -377,8 +379,10 @@ app.whenReady().then(async () => { // Make async for await
 
 
   // Handle LLM Prompt Sending (Streaming)
-  ipcMain.on('llm:sendStreamRequest', async (event, payload: { context: string; query: string; configId: string; model: string; }) => {
-    const { context, query, configId, model } = payload;
+  // Update payload type to match electron.d.ts
+  ipcMain.on('llm:sendStreamRequest', async (event, payload: { context?: string; query?: string; configId: string; model: string; messages?: ChatMessage[] }) => {
+    let streamEndedSent = false; // Flag to ensure end/error event is sent only once per request
+    const { context, query, configId, model, messages } = payload;
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
 
     if (!senderWindow) {
@@ -415,12 +419,43 @@ app.whenReady().then(async () => { // Make async for await
     console.log(`Target API URL: ${apiUrl}`);
 
     try {
+      // Determine the messages to send based on payload
+      let messagesToSend: ChatMessage[];
+      if (messages && messages.length > 0) {
+        // If a message history is provided, use it directly
+        console.log(`Using provided message history (${messages.length} messages)`);
+        messagesToSend = messages;
+      } else if (context && query) {
+        // Fallback: If no history, construct from context and query (initial message)
+        console.log("Constructing single initial user message from context and query");
+        // Combine context and query into a single initial user message
+        const initialContent = `Based on the following context:\n\n${context}\n\n---\n\nMy query is: ${query}`;
+        messagesToSend = [
+          { id: `user-initial-${randomUUID()}`, role: "user", content: initialContent }
+        ];
+      } else {
+        // Invalid state: Neither history nor context/query provided
+        console.error("Invalid payload: Must provide 'messages' array or both 'context' and 'query'.");
+        if (!senderWindow.isDestroyed()) {
+            senderWindow.webContents.send('llm:streamError', `Invalid request: Missing message history or context/query.`);
+        }
+        return; // Stop processing
+      }
+
+      // Ensure the very first message isn't 'system' if using history
+      if (messagesToSend.length > 0 && messagesToSend[0].role === 'system') {
+          console.log("Changing first message role from 'system' to 'user' for API compatibility.");
+          messagesToSend[0].role = 'user';
+          // Optionally prepend "CONTEXT:" or similar to the content if needed
+          // messagesToSend[0].content = `CONTEXT:\n${messagesToSend[0].content}`;
+      }
+
+      // Prepare messages for the API: remove the 'id' field as it might not be expected
+      const apiMessages = messagesToSend.map(({ role, content }) => ({ role, content }));
+
       const response = await axios.post(apiUrl, {
         model: model,
-        messages: [
-          { role: "system", content: `Based on the following project context:\n\n${context}\n\nAnswer the user's query.` },
-          { role: "user", content: query }
-        ],
+        messages: apiMessages, // Use the cleaned messages array
         stream: true, // Enable streaming
       }, {
         headers: {
@@ -431,49 +466,72 @@ app.whenReady().then(async () => { // Make async for await
         responseType: 'stream', // Tell axios to handle the response as a stream
       });
 
-      // Handle the stream
+      // Handle the stream with buffering for potentially fragmented JSON
+      let buffer = '';
+      // streamEndedSent is now declared in the outer scope
       response.data.on('data', (chunk: Buffer) => {
-        const chunkStr = chunk.toString('utf-8');
-        // Parse SSE data: lines starting with "data: "
-        const lines = chunkStr.split('\n').filter(line => line.trim().startsWith('data: '));
-        for (const line of lines) {
-            const jsonData = line.substring('data: '.length).trim();
-            if (jsonData === '[DONE]') {
-                // Stream finished signal from OpenAI spec
-                console.log('Stream finished [DONE]');
-                if (!senderWindow.isDestroyed()) {
-                    senderWindow.webContents.send('llm:streamEnd');
-                }
-                return; // Stop processing this chunk
-            }
-            try {
-                const parsed = JSON.parse(jsonData);
-                const content = parsed.choices?.[0]?.delta?.content;
-                if (content) {
-                    // Send the actual text content chunk back
-                     if (!senderWindow.isDestroyed()) {
-                        senderWindow.webContents.send('llm:chunk', content);
+        buffer += chunk.toString('utf-8');
+
+        // Process buffer line by line (SSE standard)
+        let boundary = buffer.indexOf('\n\n'); // SSE messages end with double newline
+        while (boundary !== -1) {
+            const message = buffer.substring(0, boundary);
+            buffer = buffer.substring(boundary + 2); // Remove message and double newline
+
+            if (message.startsWith('data: ')) {
+                const jsonData = message.substring('data: '.length).trim();
+
+                if (jsonData === '[DONE]') {
+                    console.log('Stream finished [DONE]');
+                    if (!streamEndedSent && !senderWindow.isDestroyed()) {
+                        senderWindow.webContents.send('llm:streamEnd');
+                        streamEndedSent = true; // Mark as sent
                     }
+                    // Close the stream connection? Axios might handle this.
+                    // response.data.destroy(); // Consider if needed
+                    return; // Stop processing further data
                 }
-            } catch (parseError) {
-                console.error('Failed to parse stream chunk JSON:', jsonData, parseError);
-                // Optionally send a specific error or ignore malformed chunks
+
+                try {
+                    const parsed = JSON.parse(jsonData);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    if (content) {
+                        if (!senderWindow.isDestroyed()) {
+                            senderWindow.webContents.send('llm:chunk', content);
+                        }
+                    }
+                    // Handle potential finish reason in the last chunk if needed
+                    // const finishReason = parsed.choices?.[0]?.finish_reason;
+                    // if (finishReason === 'stop') { ... }
+
+                } catch (parseError) {
+                    // Log only if it's not the [DONE] signal causing issues potentially
+                    if (jsonData !== '[DONE]') {
+                        console.error('Failed to parse stream chunk JSON:', jsonData, parseError);
+                    }
+                    // Don't stop processing, maybe the next chunk completes it
+                }
             }
+            // Look for the next message boundary
+            boundary = buffer.indexOf('\n\n');
         }
       });
 
       response.data.on('end', () => {
         console.log('Axios stream ended.');
-        // Ensure end signal is sent if not already sent by [DONE]
-         if (!senderWindow.isDestroyed()) {
-            senderWindow.webContents.send('llm:streamEnd');
-        }
+        // Ensure end signal is sent if not already sent by [DONE] or an error occurred
+        // REMOVED: This was causing duplicate end events. The [DONE] signal is sufficient.
+        // if (!streamEndedSent && !senderWindow.isDestroyed()) {
+        //    senderWindow.webContents.send('llm:streamEnd');
+        //    streamEndedSent = true;
+        // }
       });
 
       response.data.on('error', (streamError: Error) => {
         console.error('Axios stream error:', streamError);
-         if (!senderWindow.isDestroyed()) {
+         if (!streamEndedSent && !senderWindow.isDestroyed()) {
             senderWindow.webContents.send('llm:streamError', `Stream error: ${streamError.message}`);
+            streamEndedSent = true; // Also mark as ended on error
         }
       });
 
@@ -482,8 +540,10 @@ app.whenReady().then(async () => { // Make async for await
       const errorMessage = error.response?.data?.error?.message || error.message;
       console.error(`API Request Error for ${selectedConfig.name} (${model}):`, errorMessage, error.response?.data);
       // Send error back to renderer via the stream error channel
-       if (!senderWindow.isDestroyed()) {
+       // Ensure the error is sent only if the stream hasn't already ended via another path
+       if (!streamEndedSent && !senderWindow.isDestroyed()) {
         senderWindow.webContents.send('llm:streamError', `API request failed: ${errorMessage}`);
+        streamEndedSent = true; // Mark as ended on error
       }
     }
   });

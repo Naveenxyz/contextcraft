@@ -47,6 +47,7 @@ html.dark { /* Variables for dark theme */
   --card-hover-bg-color: #383838; /* Slightly lighter hover */
   --card-hover-border-color: #555555;
   --secondary-text-color: #999999; /* Lighter secondary text */
+  --user-message-bg-dark: #333333; /* Specific background for user messages in dark mode */
 }
 
 /* Reset basic styles */
@@ -131,6 +132,55 @@ body {
   margin-bottom: 1rem;
   padding-right: 0.5rem; /* Space for scrollbar */
 }
+/* Individual Chat Message Styling */
+.chat-message {
+  margin-bottom: 0.8rem; /* Reduced space between messages */
+  padding: 0.6rem 0.9rem; /* Reduced padding */
+  border-radius: 10px; /* Slightly less rounded corners */
+  max-width: 80%; /* Prevent messages from being too wide */
+  word-wrap: break-word; /* Ensure long words break */
+  position: relative; /* For positioning copy button */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+  transition: box-shadow 0.2s ease; /* Smooth transition for hover effects */
+}
+
+.chat-message.user {
+  background-color: var(--button-bg-color); /* User message background */
+  color: var(--text-color);
+  margin-left: auto; /* Align user messages to the right */
+  border-bottom-right-radius: 4px; /* Slightly different corner for visual cue */
+}
+
+html.dark .chat-message.user {
+  background-color: var(--user-message-bg-dark); /* Use distinct dark mode background */
+}
+
+.chat-message.assistant {
+  background-color: var(--pane-bg-color); /* Assistant message background */
+  color: var(--text-color);
+  margin-right: auto; /* Align assistant messages to the left */
+  /* border: 1px solid var(--border-color); */ /* Removed border */
+  border-bottom-left-radius: 4px; /* Slightly different corner */
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.message-header strong {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--heading-color);
+}
+
+.message-content {
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 
 .chat-input-area {
   flex-shrink: 0; /* Prevent shrinking */
@@ -164,6 +214,8 @@ body {
   width: auto; /* Allow select to size based on content */
   min-width: 150px; /* Ensure a minimum usable width */
   margin: 0; /* Reset margins */
+  border-radius: 6px; /* Slightly more rounded */
+  padding: 0.4rem 0.6rem; /* Adjust padding */
 }
 
 
@@ -171,6 +223,8 @@ body {
   width: 100%;
   margin-bottom: 0.5rem; /* Space between textarea and button */
   resize: vertical; /* Allow vertical resize */
+  border-radius: 6px; /* Match select */
+  padding: 0.6rem 0.8rem; /* Adjust padding */
 }
 
 .chat-input-area button {
@@ -261,6 +315,22 @@ button:disabled {
   padding: 0.2rem 0.5rem;
   font-size: 0.8rem;
 }
+/* Specific styling for copy button inside messages */
+.message-copy-button {
+  margin-top: 0; /* Reset margin */
+  padding: 0.1rem 0.4rem; /* Smaller padding */
+  font-size: 0.75rem; /* Smaller font */
+  opacity: 0; /* Hide by default */
+  transition: opacity 0.2s ease; /* Smooth fade */
+  position: absolute; /* Position relative to parent */
+  top: 5px; /* Adjust position */
+  right: 8px; /* Adjust position */
+}
+
+.chat-message:hover .message-copy-button {
+  opacity: 0.7; /* Show on hover */
+}
+
 
 /* Error display */
 .error-display {
@@ -352,6 +422,19 @@ select {
   background-color: transparent; /* Inherit background */
   border: none; /* Remove border */
 }
+/* Code block styling within messages */
+.chat-message .code-block {
+  margin: 0.5rem 0; /* Add some vertical margin */
+  border-radius: 6px; /* Slightly rounded corners for code blocks */
+  overflow: hidden; /* Ensure highlighting background doesn't overflow */
+}
+
+.chat-message .inline-code {
+  background-color: rgba(128, 128, 128, 0.15); /* Subtle background for inline code */
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+}
+
 
 /* --- Project Selection View Styles (Grid/Card Layout) --- */
 .project-selection-view {

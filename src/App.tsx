@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'; // Added useCallback
+import { useState, useEffect, useCallback, useRef } from 'react'; // Added useCallback, useRef
 import ReactMarkdown, { Components } from 'react-markdown'; // Use Components type
 // Removed incorrect CodeProps import
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -10,7 +10,8 @@ import { DirectoryItem } from './types/electron'; // Import the DirectoryItem ty
 import FileTree from './components/FileTree'; // Import the FileTree component
 import LLMConfigManager from './components/LLMConfigManager'; // Import the LLM Config Manager
 import { LLMConfig } from './types/llmConfig'; // Import LLMConfig type
-import ChatView from './components/ChatView'; // Import the new ChatView component
+import ChatView from './components/ChatView'; // Import ChatView component
+import { ChatMessage } from './types/chat'; // <<< Import ChatMessage type from shared definition
 import ProjectSelectionView from './components/ProjectSelectionView'; // Import the ProjectSelectionView component
 
 // Helper function to count files recursively
@@ -40,24 +41,32 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState<string>(''); // State for user query
   const [thinkingSteps, setThinkingSteps] = useState<string>(''); // State for <think> content
-  const [llmResponse, setLlmResponse] = useState<string>(''); // State for final LLM response (excluding <think>)
-  const [isSending, setIsSending] = useState<boolean>(false); // State for LLM request loading
+  // const [llmResponse, setLlmResponse] = useState<string>(''); // Replaced by chatHistory and currentAssistantMessage
+  const [isSending, setIsSending] = useState<boolean>(false); // Represents the overall request state (user sending -> assistant responding)
   // State for LLM Configurations
   const [llmConfigs, setLlmConfigs] = useState<LLMConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false); // Re-add state for modal visibility
 
-  const [fullPromptForCopy, setFullPromptForCopy] = useState<string>(''); // <<< State for the full prompt to be copied
-  const [copyPreviewText, setCopyPreviewText] = useState<string>(''); // <<< State for the copy preview
-  // --- New states for refactoring ---
+  // const [fullPromptForCopy, setFullPromptForCopy] = useState<string>(''); // Replaced by chatHistory
+  // const [copyPreviewText, setCopyPreviewText] = useState<string>(''); // No longer needed
+  // --- States for Chat Refactor ---
   const [viewMode, setViewMode] = useState<'contextSelection' | 'chatting'>('contextSelection');
-  const [pendingAddedFilePaths, setPendingAddedFilePaths] = useState<string[]>([]);
-  const [addedContext, setAddedContext] = useState<string>('');
-  const [chatHistoryContext, setChatHistoryContext] = useState<string>('');
-  // --- End new states ---
+  const [pendingAddedFilePaths, setPendingAddedFilePaths] = useState<string[]>([]); // Keep for potential future use
+  // const [addedContext, setAddedContext] = useState<string>(''); // Merged into chat history logic
+  // const [chatHistoryContext, setChatHistoryContext] = useState<string>(''); // Replaced by chatHistory state
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // Holds the actual conversation messages
+  const [currentAssistantMessage, setCurrentAssistantMessage] = useState<string | null>(null); // Holds the streaming response
+  const currentAssistantMessageRef = useRef<string | null>(null); // Ref to track the latest streaming message
+  const [isReceiving, setIsReceiving] = useState<boolean>(false); // True when assistant is actively streaming
 
 
+  // Effect to keep the ref updated with the latest streaming message
+  useEffect(() => {
+    currentAssistantMessageRef.current = currentAssistantMessage;
+  }, [currentAssistantMessage]);
+  
   // Listener for analysis errors & fetch initial LLM configs & setup stream listeners
   useEffect(() => {
     // Fetch LLM configurations on mount
@@ -92,41 +101,76 @@ function App() {
 
     // Setup LLM stream listeners
     const removeChunkListener = window.electronAPI.onLLMChunk((chunk) => {
-        // Basic parsing for <think> tags
+        // Re-introduce parsing for <think> tags
         const thinkRegex = /<think>(.*?)<\/think>/gs; // 's' flag for multiline
         let lastIndex = 0;
-        let responseChunk = '';
-        let thinkChunk = '';
+        let currentResponseContent = ''; // Accumulator for non-think content in this chunk
+        let currentThinkContent = ''; // Accumulator for think content in this chunk
         let match;
 
-        while ((match = thinkRegex.exec(chunk)) !== null) {
-            // Append text before the <think> tag to responseChunk
-            responseChunk += chunk.substring(lastIndex, match.index);
-            // Append content inside <think> tag to thinkChunk
-            thinkChunk += match[1]; // Group 1 captures content inside tags
-            lastIndex = thinkRegex.lastIndex;
+        // Ensure isReceiving is true when we get the first chunk
+        if (!isReceiving) {
+            setIsReceiving(true);
         }
-        // Append any remaining text after the last </think> tag
-        responseChunk += chunk.substring(lastIndex);
 
-        // Update states
-        if (thinkChunk) {
-            setThinkingSteps(prev => prev + thinkChunk);
+        // Process the chunk to separate think content and response content
+        thinkRegex.lastIndex = 0; // Reset regex state for each chunk
+        while ((match = thinkRegex.exec(chunk)) !== null) {
+            // Add content *before* the <think> tag to response content
+            currentResponseContent += chunk.substring(lastIndex, match.index);
+            // Add content *inside* the <think> tag to think content
+            currentThinkContent += match[1];
+            // Update lastIndex to point *after* the </think> tag
+            lastIndex = match.index + match[0].length; // Use match[0].length to skip the entire tag block
         }
-        if (responseChunk) {
-            setLlmResponse(prev => prev + responseChunk);
+        // Add any remaining content *after* the last </think> tag
+        currentResponseContent += chunk.substring(lastIndex);
+
+        // Update states based on accumulated content for this chunk
+        if (currentThinkContent) {
+            setThinkingSteps(prev => prev + currentThinkContent);
+        }
+        if (currentResponseContent) {
+            // Append only the response part to the current assistant message stream
+            setCurrentAssistantMessage(prev => (prev || '') + currentResponseContent);
         }
     });
 
     const removeStreamEndListener = window.electronAPI.onLLMStreamEnd(() => {
         console.log("Stream ended in renderer.");
-        setIsSending(false); // Reset sending state when stream finishes
+        // Add the complete assistant message (excluding thinking steps) to history
+        setChatHistory(prev => {
+            // Use the ref here to get the most up-to-date message content when the stream ends
+            const messageFromRef = currentAssistantMessageRef.current;
+            if (messageFromRef && messageFromRef.trim()) {
+                // **Crucially, remove think tags from the final accumulated message here**
+                const thinkRegex = /<think>.*?<\/think>/gs; // Use the same regex
+                const finalContent = messageFromRef.replace(thinkRegex, '').trim();
+
+                // Only add if there's actual content left after removing tags
+                if (finalContent) {
+                    const finalMessage: ChatMessage = {
+                        id: `assistant-${Date.now()}`,
+                        role: 'assistant',
+                        content: finalContent,
+                    };
+                    return [...prev, finalMessage];
+                }
+            }
+            return prev; // Return previous state if message is null/empty or only contained tags
+        });
+        setCurrentAssistantMessage(null); // Clear the streaming message buffer
+        // Don't clear thinkingSteps here, let the next request handle it
+        setIsReceiving(false);
+        setIsSending(false); // Reset overall sending state
     });
 
      const removeStreamErrorListener = window.electronAPI.onLLMStreamError((errorMsg) => {
         console.error("Received stream error from main:", errorMsg);
         setError(`LLM Stream Error: ${errorMsg}`);
-        setIsSending(false); // Reset sending state on error
+        setCurrentAssistantMessage(null); // Clear any partial message
+        setIsReceiving(false);
+        setIsSending(false); // Reset overall sending state on error
     });
 
     // Cleanup function to remove all listeners
@@ -136,7 +180,7 @@ function App() {
         removeStreamEndListener();
         removeStreamErrorListener();
     };
-  }, []); // Empty dependency array ensures this runs only once on mount
+  }, []); // Empty dependency array: Run only on mount and unmount
 
   // Effect to compile context when selected files change
   useEffect(() => {
@@ -185,62 +229,9 @@ function App() {
     compileContext();
   }, [selectedFilePaths]); // Re-run whenever selectedFilePaths changes
 
-  // Effect to update the copy preview text
-  useEffect(() => {
-    if (!compiledContext) {
-      setCopyPreviewText('');
-      return;
-    }
-    const preview = query
-      ? `User Query:\n${query}\n\n---\n\nContext:\n${compiledContext}`
-      : compiledContext;
-    setCopyPreviewText(preview);
-  }, [compiledContext, query]); // Re-run when context or query changes
+  // Removed useEffect for copyPreviewText as it's no longer needed
 
-  // Effect to process files added dynamically during chat
-  useEffect(() => {
-    const processPendingFiles = async () => {
-      if (pendingAddedFilePaths.length === 0) {
-        return; // Nothing to process
-      }
-
-      console.log('Processing pending added files:', pendingAddedFilePaths);
-      // Create a copy and clear the state immediately to prevent race conditions
-      const pathsToProcess = [...pendingAddedFilePaths];
-      setPendingAddedFilePaths([]);
-
-      try {
-        const fileContentsPromises = pathsToProcess.map(filePath =>
-          window.electronAPI.readFileContent(filePath)
-        );
-        const results = await Promise.all(fileContentsPromises);
-
-        let newlyAddedContext = '';
-        results.forEach((content, index) => {
-          const filePath = pathsToProcess[index];
-          if (content !== null) {
-            newlyAddedContext += `--- Added File: ${filePath} ---\n\n`;
-            newlyAddedContext += content;
-            newlyAddedContext += '\n\n';
-          } else {
-            console.warn(`Failed to read content for added file: ${filePath}`);
-            newlyAddedContext += `--- Failed to read added file: ${filePath} ---\n\n`;
-          }
-        });
-
-        // Append the newly fetched context to the existing addedContext
-        setAddedContext(prev => prev + newlyAddedContext);
-        console.log('Finished processing added files.');
-
-      } catch (err) {
-        console.error("Error processing pending added files:", err);
-        setError(err instanceof Error ? `Error adding file context: ${err.message}` : 'Unknown error adding file context');
-        // Decide if we should retry or just notify user. For now, just log and set error.
-      }
-    };
-
-    processPendingFiles();
-  }, [pendingAddedFilePaths]); // Run whenever pendingAddedFilePaths changes
+// Removed useEffect that processed pendingAddedFilePaths asynchronously
 
   // Effect to calculate total file count
   useEffect(() => {
@@ -257,11 +248,14 @@ function App() {
     setDirectoryTree(null);
     setSelectedFilePaths([]);
     setCompiledContext('');
-    setLlmResponse('');
+    // setLlmResponse(''); // Removed
     setQuery('');
     setViewMode('contextSelection');
-    setAddedContext('');
-    setChatHistoryContext('');
+    // setAddedContext(''); // Removed
+    // setChatHistoryContext(''); // Removed
+    setChatHistory([]); // Reset chat history
+    setCurrentAssistantMessage(null); // Reset streaming message
+    setIsReceiving(false);
     setPendingAddedFilePaths([]);
     setTotalFileCount(0); // Reset count during analysis
 
@@ -313,66 +307,189 @@ function App() {
     analyzeDirectory(path);
   }, [analyzeDirectory]);
 
-  const handleSendPrompt = async () => {
+  // Function to INITIATE the chat (called by "Start Chat" button)
+  const handleStartChat = async () => {
     if (!query) {
-      setError("Query cannot be empty.");
+      setError("Initial query cannot be empty.");
       return;
     }
     if (!selectedConfigId || !selectedModel) {
       setError("Configuration or model not selected.");
       return;
     }
-
-    let contextToSend = '';
-    let nextChatHistoryContext = '';
-
-    if (viewMode === 'contextSelection') {
-      if (!compiledContext) {
-        setError("Please select files to compile context first.");
-        return;
-      }
-      contextToSend = compiledContext;
-      nextChatHistoryContext = compiledContext; // Initialize chat history
-      console.log("Sending initial prompt (contextSelection mode)...");
-    } else { // chatting mode
-      contextToSend = chatHistoryContext + (addedContext ? '\n\n' + addedContext : '');
-      nextChatHistoryContext = contextToSend;
-      console.log("Sending follow-up prompt (chatting mode)...");
+    if (!compiledContext) {
+      setError("Please select files and compile context first.");
+      return;
     }
+
+    console.log("Starting chat...");
+
+    const initialSystemMessage: ChatMessage = {
+      id: 'system-init',
+      role: 'system',
+      content: compiledContext,
+    };
+    const initialUserMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: query,
+    };
+
+    const initialHistory = [initialSystemMessage, initialUserMessage];
 
     setIsSending(true);
     setError(null);
-    setLlmResponse('');
-    setThinkingSteps('');
+    // setLlmResponse(''); // Removed
+    setThinkingSteps(''); // Clear previous thinking steps if any
+    setCurrentAssistantMessage(null); // Clear any previous streaming message
+    setIsReceiving(false);
 
-    // <<< Construct the full prompt string for copying BEFORE sending
-    const promptToCopy = `${contextToSend}\n\n---\n\nUser Query:\n${query}`;
-    setFullPromptForCopy(promptToCopy);
-
-    console.log(`Requesting stream using config ${selectedConfigId} and model ${selectedModel}...`);
+    console.log(`Requesting initial stream using config ${selectedConfigId} and model ${selectedModel}...`);
     try {
-      window.electronAPI.sendPromptStreamRequest({
-        context: contextToSend,
-        query: query,
+      // --- BACKEND API ADAPTATION NEEDED ---
+      // Ideally, the backend accepts `messages: initialHistory`.
+      // For now, send using the old format for the *first* message.
+      await window.electronAPI.sendPromptStreamRequest({
+        context: compiledContext, // Send initial context
+        query: query,             // Send initial query
         configId: selectedConfigId,
         model: selectedModel,
+        // messages: initialHistory // This is the target format
       });
 
-      setChatHistoryContext(nextChatHistoryContext);
-      setAddedContext('');
-      setQuery('');
-
-      if (viewMode === 'contextSelection') {
-        setViewMode('chatting');
-        console.log("Switched to chatting mode.");
-      }
+      // Set history *after* successful API call initiation
+      setChatHistory(initialHistory);
+      setQuery(''); // Clear input query
+      setViewMode('chatting'); // Switch view
+      console.log("Switched to chatting mode.");
 
     } catch (err) {
       console.error("Error initiating prompt stream request:", err);
       setError(err instanceof Error ? `Error sending prompt: ${err.message}` : 'Unknown error sending prompt');
-      setIsSending(false);
+      setIsSending(false); // Reset sending state on error
     }
   };
+
+  // Function to handle subsequent messages (passed to ChatView)
+  const handleSendMessage = async (originalMessages: ChatMessage[]) => { // Rename input param
+    if (!selectedConfigId || !selectedModel) {
+      setError("Configuration or model not selected.");
+      setChatHistory(prev => [...prev, { id: `error-${Date.now()}`, role: 'system', content: "Error: Configuration or model not selected." }]);
+      return;
+    }
+
+    let messagesToSend = [...originalMessages]; // Create a mutable copy
+    const lastMessageIndex = messagesToSend.length - 1;
+    const lastMessage = messagesToSend[lastMessageIndex];
+
+    if (!lastMessage || lastMessage.role !== 'user') {
+        console.error("handleSendMessage called without a final user message.");
+        return; // Should not happen if called correctly from ChatView
+    }
+
+    // --- Process Pending Files ---
+    let addedFileContextString = '';
+    if (pendingAddedFilePaths.length > 0) {
+        console.log('Processing pending files before sending:', pendingAddedFilePaths);
+        const pathsToProcess = [...pendingAddedFilePaths]; // Copy before clearing
+        // Don't clear pending paths immediately, do it after successful processing
+
+        try {
+            const fileContentsPromises = pathsToProcess.map(filePath =>
+                window.electronAPI.readFileContent(filePath)
+            );
+            const results = await Promise.all(fileContentsPromises);
+
+            results.forEach((content, index) => {
+                const filePath = pathsToProcess[index];
+                if (content !== null) {
+                    addedFileContextString += `--- Added File: ${filePath} ---\n\n${content}\n\n`;
+                } else {
+                    console.warn(`Failed to read content for added file: ${filePath}`);
+                    addedFileContextString += `--- Failed to read added file: ${filePath} ---\n\n`;
+                }
+            });
+            addedFileContextString = addedFileContextString.trim(); // Remove trailing newlines
+
+            if (addedFileContextString) {
+                // Prepend the context to the *last user message*
+                const updatedLastMessage: ChatMessage = {
+                    ...lastMessage,
+                    content: `${addedFileContextString}\n\n---\n\n${lastMessage.content}` // Prepend context
+                };
+                // Replace the last message in our mutable copy
+                messagesToSend[lastMessageIndex] = updatedLastMessage;
+                console.log('Added file context prepended to user message.');
+                // setSelectedFilePaths update is now handled by handleFileSelectionChange
+                setPendingAddedFilePaths([]); // Clear pending paths now
+            }
+
+        } catch (err) {
+            console.error("Error processing pending added files during send:", err);
+            const fileReadErrorMsg = err instanceof Error ? `Error adding file context: ${err.message}` : 'Unknown error adding file context';
+            setError(fileReadErrorMsg);
+            // Add error to chat history *before* sending the original message
+            setChatHistory(prev => [...prev, { id: `error-fileread-${Date.now()}`, role: 'system', content: fileReadErrorMsg }]);
+            // Proceed without the added context, using originalMessages
+            messagesToSend = [...originalMessages]; // Revert to original if file reading failed
+            setPendingAddedFilePaths([]); // Also clear pending paths on error
+        }
+    }
+    // --- End Process Pending Files ---
+// Removed erroneous closing brace here
+
+    console.log("Sending subsequent message...");
+
+    setIsSending(true);
+    setError(null);
+    setThinkingSteps(''); // Clear thinking steps for new request
+    setCurrentAssistantMessage(null);
+    setIsReceiving(false);
+
+    // Update the main history state immediately to show the user message
+    setChatHistory(messagesToSend); // Use the potentially modified messages array
+
+    console.log(`Requesting subsequent stream using config ${selectedConfigId} and model ${selectedModel}...`);
+    try {
+      // --- BACKEND API ADAPTATION NEEDED ---
+      // The backend MUST be updated to accept the 'messages' array here.
+      // Sending context/query is incorrect for follow-up turns.
+      // Add checks here to ensure configId and model are not null
+      if (!selectedConfigId || !selectedModel) {
+          console.error("Config ID or Model became null unexpectedly before API call.");
+          setError("Configuration or model missing.");
+          setIsSending(false);
+          return; // Stop execution
+      }
+
+      await window.electronAPI.sendPromptStreamRequest({
+        // context: '', // Incorrect for follow-up
+        // query: lastMessage.content, // Incorrect for follow-up
+        configId: selectedConfigId, // Now guaranteed to be string
+        model: selectedModel,       // Now guaranteed to be string
+        messages: messagesToSend    // Pass the potentially modified messages array
+      });
+
+      // No need to set history again here, already done before API call
+      // No need to clear query, ChatView handles it
+
+    } catch (err) {
+      console.error("Error initiating subsequent prompt stream request:", err);
+      const errorMsg = err instanceof Error ? `Error sending message: ${err.message}` : 'Unknown error sending message';
+      setError(errorMsg);
+      // Add error to chat history
+      setChatHistory(prev => [...prev, { id: `error-${Date.now()}`, role: 'system', content: `Error: ${errorMsg}` }]);
+      setIsSending(false); // Reset sending state on error
+    }
+  };
+
+  // Function to switch back to context selection view
+  const handleGoBackToContextSelection = useCallback(() => {
+    setViewMode('contextSelection');
+    // Optionally reset other chat-specific states if needed
+    // setError(null);
+    // setQuery(''); // Keep query maybe?
+  }, []);
 
   // Handler for individual file selection changes
   const handleFileSelectionChange = useCallback((filePath: string, isSelected: boolean) => {
@@ -389,10 +506,17 @@ function App() {
       console.log('Context Selection: Updated selectedFilePaths');
     } else if (viewMode === 'chatting') {
       if (isSelected) {
+        // Add to pending list for next message processing
         setPendingAddedFilePaths(prevPending =>
           prevPending.includes(filePath) ? prevPending : [...prevPending, filePath]
         );
-        console.log('Chatting: Added to pendingAddedFilePaths:', filePath);
+        // ALSO update the main selection state immediately for visual feedback
+        setSelectedFilePaths(prevSelected => {
+            const currentSet = new Set(prevSelected);
+            currentSet.add(filePath);
+            return Array.from(currentSet);
+        });
+        console.log('Chatting: Added to pending and selected paths:', filePath);
       } else {
         console.log('Chatting: Deselection ignored for:', filePath);
       }
@@ -505,12 +629,7 @@ function App() {
                 </button>
               )}
               {/* Preview Area */}
-              {/* {copyPreviewText && (
-                <div className="copy-preview-area" style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
-                  <h4>Copy Preview:</h4>
-                  <pre className="context-display-area"><code>{copyPreviewText}</code></pre>
-                </div>
-              )} */}
+              {/* Removed Copy Preview Area */}
             </div>
             <div className="query-pane">
               <h4>Your Query</h4>
@@ -574,7 +693,7 @@ function App() {
             </div>
             {/* Action Button: Start Chat */}
             <button
-              onClick={handleSendPrompt}
+              onClick={handleStartChat} // Use the new handler to initiate chat
               disabled={isSending || isLoading || isCompiling || !compiledContext || !query || !selectedConfigId || !selectedModel}
               style={{ marginTop: '10px', width: '100%' }}
             >
@@ -589,20 +708,28 @@ function App() {
       ) : (
         // --- Chatting Mode ---
         <ChatView
+          // Input/Query state
           query={query}
           setQuery={setQuery}
-          llmResponse={llmResponse}
-          thinkingSteps={thinkingSteps}
-          isSending={isSending}
-          error={error}
-          handleSendPrompt={handleSendPrompt}
+          // LLM Configs
           llmConfigs={llmConfigs}
           selectedConfigId={selectedConfigId}
           setSelectedConfigId={setSelectedConfigId}
           selectedModel={selectedModel}
           setSelectedModel={setSelectedModel}
-          fullPromptForCopy={fullPromptForCopy} // <<< Pass the state down
-          // Pass chat history related props later if needed
+          // Chat History & State
+          chatHistory={chatHistory}
+          onSendMessage={handleSendMessage} // Pass the handler for sending messages
+          initialContext={compiledContext} // Pass the initially compiled context
+          // Streaming State
+          currentAssistantMessage={currentAssistantMessage}
+          isReceiving={isReceiving}
+          // Overall Request State & Errors
+          isSending={isSending} // Pass the overall sending state
+          thinkingSteps={thinkingSteps} // Pass thinking steps (might be shown briefly before stream starts)
+          error={error}
+          // Add the go back handler
+          onGoBack={handleGoBackToContextSelection}
         />
       )}
 

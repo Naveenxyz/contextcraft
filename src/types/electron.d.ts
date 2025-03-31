@@ -18,7 +18,8 @@ export interface Project {
 }
 
 // Import LLMConfig type
-import { LLMConfig } from './llmConfig';
+import { LLMConfig } from './llmConfig'; // Import LLMConfig type
+import { ChatMessage } from '../components/ChatView'; // <<< Import ChatMessage type
 
 export interface IElectronAPI {
   // Renderer -> Main (Invoke/Handle)
@@ -28,7 +29,7 @@ export interface IElectronAPI {
   // Remove old sendPrompt
   // sendPrompt: (payload: { context: string; query: string; configId: string; model: string; }) => Promise<string>;
   // Add function to initiate stream request (Renderer -> Main)
-  sendPromptStreamRequest: (payload: { context: string; query: string; configId: string; model: string; }) => void;
+  sendPromptStreamRequest: (payload: { context?: string; query?: string; configId: string; model: string; messages?: ChatMessage[] }) => void; // <<< Make context/query optional, add messages
   // Update return type for analyzeDirectory
   analyzeDirectory: (path: string) => Promise<DirectoryItem[] | string>; // Returns tree structure or error string
   readFileContent: (path: string) => Promise<string | null>; // Add function to read file content

@@ -408,7 +408,8 @@ electron.app.whenReady().then(async () => {
   });
   electron.ipcMain.on("llm:sendStreamRequest", async (event, payload) => {
     var _a, _b, _c, _d;
-    const { context, query, configId, model } = payload;
+    let streamEndedSent = false;
+    const { context, query, configId, model, messages } = payload;
     const senderWindow = electron.BrowserWindow.fromWebContents(event.sender);
     if (!senderWindow) {
       console.error("Could not find sender window for LLM stream request.");
@@ -431,16 +432,38 @@ electron.app.whenReady().then(async () => {
     const apiUrl = `${baseEndpoint}${apiPath}`;
     console.log(`Target API URL: ${apiUrl}`);
     try {
-      const response = await axios.post(apiUrl, {
-        model,
-        messages: [
-          { role: "system", content: `Based on the following project context:
+      let messagesToSend;
+      if (messages && messages.length > 0) {
+        console.log(`Using provided message history (${messages.length} messages)`);
+        messagesToSend = messages;
+      } else if (context && query) {
+        console.log("Constructing single initial user message from context and query");
+        const initialContent = `Based on the following context:
 
 ${context}
 
-Answer the user's query.` },
-          { role: "user", content: query }
-        ],
+---
+
+My query is: ${query}`;
+        messagesToSend = [
+          { id: `user-initial-${node_crypto.randomUUID()}`, role: "user", content: initialContent }
+        ];
+      } else {
+        console.error("Invalid payload: Must provide 'messages' array or both 'context' and 'query'.");
+        if (!senderWindow.isDestroyed()) {
+          senderWindow.webContents.send("llm:streamError", `Invalid request: Missing message history or context/query.`);
+        }
+        return;
+      }
+      if (messagesToSend.length > 0 && messagesToSend[0].role === "system") {
+        console.log("Changing first message role from 'system' to 'user' for API compatibility.");
+        messagesToSend[0].role = "user";
+      }
+      const apiMessages = messagesToSend.map(({ role, content }) => ({ role, content }));
+      const response = await axios.post(apiUrl, {
+        model,
+        messages: apiMessages,
+        // Use the cleaned messages array
         stream: true
         // Enable streaming
       }, {
@@ -453,49 +476,57 @@ Answer the user's query.` },
         responseType: "stream"
         // Tell axios to handle the response as a stream
       });
+      let buffer = "";
       response.data.on("data", (chunk) => {
         var _a2, _b2, _c2;
-        const chunkStr = chunk.toString("utf-8");
-        const lines = chunkStr.split("\n").filter((line) => line.trim().startsWith("data: "));
-        for (const line of lines) {
-          const jsonData = line.substring("data: ".length).trim();
-          if (jsonData === "[DONE]") {
-            console.log("Stream finished [DONE]");
-            if (!senderWindow.isDestroyed()) {
-              senderWindow.webContents.send("llm:streamEnd");
+        buffer += chunk.toString("utf-8");
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const message = buffer.substring(0, boundary);
+          buffer = buffer.substring(boundary + 2);
+          if (message.startsWith("data: ")) {
+            const jsonData = message.substring("data: ".length).trim();
+            if (jsonData === "[DONE]") {
+              console.log("Stream finished [DONE]");
+              if (!streamEndedSent && !senderWindow.isDestroyed()) {
+                senderWindow.webContents.send("llm:streamEnd");
+                streamEndedSent = true;
+              }
+              return;
             }
-            return;
-          }
-          try {
-            const parsed = JSON.parse(jsonData);
-            const content = (_c2 = (_b2 = (_a2 = parsed.choices) == null ? void 0 : _a2[0]) == null ? void 0 : _b2.delta) == null ? void 0 : _c2.content;
-            if (content) {
-              if (!senderWindow.isDestroyed()) {
-                senderWindow.webContents.send("llm:chunk", content);
+            try {
+              const parsed = JSON.parse(jsonData);
+              const content = (_c2 = (_b2 = (_a2 = parsed.choices) == null ? void 0 : _a2[0]) == null ? void 0 : _b2.delta) == null ? void 0 : _c2.content;
+              if (content) {
+                if (!senderWindow.isDestroyed()) {
+                  senderWindow.webContents.send("llm:chunk", content);
+                }
+              }
+            } catch (parseError) {
+              if (jsonData !== "[DONE]") {
+                console.error("Failed to parse stream chunk JSON:", jsonData, parseError);
               }
             }
-          } catch (parseError) {
-            console.error("Failed to parse stream chunk JSON:", jsonData, parseError);
           }
+          boundary = buffer.indexOf("\n\n");
         }
       });
       response.data.on("end", () => {
         console.log("Axios stream ended.");
-        if (!senderWindow.isDestroyed()) {
-          senderWindow.webContents.send("llm:streamEnd");
-        }
       });
       response.data.on("error", (streamError) => {
         console.error("Axios stream error:", streamError);
-        if (!senderWindow.isDestroyed()) {
+        if (!streamEndedSent && !senderWindow.isDestroyed()) {
           senderWindow.webContents.send("llm:streamError", `Stream error: ${streamError.message}`);
+          streamEndedSent = true;
         }
       });
     } catch (error) {
       const errorMessage = ((_c = (_b = (_a = error.response) == null ? void 0 : _a.data) == null ? void 0 : _b.error) == null ? void 0 : _c.message) || error.message;
       console.error(`API Request Error for ${selectedConfig.name} (${model}):`, errorMessage, (_d = error.response) == null ? void 0 : _d.data);
-      if (!senderWindow.isDestroyed()) {
+      if (!streamEndedSent && !senderWindow.isDestroyed()) {
         senderWindow.webContents.send("llm:streamError", `API request failed: ${errorMessage}`);
+        streamEndedSent = true;
       }
     }
   });
