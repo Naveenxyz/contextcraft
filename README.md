@@ -15,6 +15,11 @@ I somehow ended up building this full-blown Electron app
 * ⚙️ Configures different LLM providers (because choosing one is too mainstream)
 * 🔒 Securely stores your API keys (unlike that one time you accidentally pushed them to GitHub)
 * 💾 Saves your settings (because nobody likes repeating themselves)
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/7c1f2834-8f44-4ee3-a7f7-6fc9fdb3fe3f" />
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/48bc04e8-1634-43ea-81b8-7d6d47094749" />
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/510ab3dd-4811-4480-9c41-f319cce873d0" />
+
+
 
 ## Tech Stack
 
